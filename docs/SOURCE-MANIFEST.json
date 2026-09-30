@@ -1,0 +1,672 @@
+{
+  "exported_at": "2026-09-30",
+  "timezone": "America/Bogota",
+  "frontend_repository": "TallerMecario",
+  "backend_repository": "TallerMecarioB",
+  "type": "selected-notion-content-export",
+  "scope": "frontend product/domain/API/decisions; no AGENTS.md",
+  "native_full_workspace_export": false,
+  "sources": [
+    {
+      "id": "3dd6ab0a-330d-80f6-ac30-e656cc016e2f",
+      "title": "Proyecto: Aplicaciones para Talleres Bogota",
+      "url": "https://app.notion.com/p/3dd6ab0a330d80f6ac30e656cc016e2f?pvs=204",
+      "last_edited_at": "2026-09-20T20:30:19.248Z",
+      "fetch_snapshot_as_of": "2026-09-28T14:28:04.864Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3de6ab0a-330d-817a-b78b-cbd88c100e5a",
+      "title": "🏗️ Arquitectura Técnica v1 — TallerMecario",
+      "url": "https://app.notion.com/p/3de6ab0a330d817ab78bcbd88c100e5a?pvs=204",
+      "last_edited_at": "2026-09-28T14:28:04.864Z",
+      "fetch_snapshot_as_of": "2026-09-29T22:45:02.267Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-815f-bb32-e6200f8d5417",
+      "title": "📚 Diccionario de Datos v1 — PostgreSQL",
+      "url": "https://app.notion.com/p/3e06ab0a330d815fbb32e6200f8d5417?pvs=204",
+      "last_edited_at": "2026-09-26T02:22:11.148Z",
+      "fetch_snapshot_as_of": "2026-09-29T22:44:53.182Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-81a5-8a05-dabdf042f145",
+      "title": "📱 ADR-005 — PWA + IndexedDB para operación offline",
+      "url": "https://app.notion.com/p/3e06ab0a330d81a58a05dabdf042f145?pvs=204",
+      "last_edited_at": "2026-09-20T20:28:15.600Z",
+      "fetch_snapshot_as_of": "2026-09-20T20:28:15.600Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-81d3-98ff-e925a65506c8",
+      "title": "🔐 RBAC — Matriz completa de roles y permisos v1",
+      "url": "https://app.notion.com/p/3e06ab0a330d81d398ffe925a65506c8?pvs=204",
+      "last_edited_at": "2026-09-26T04:26:34.276Z",
+      "fetch_snapshot_as_of": "2026-09-26T04:26:34.276Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3df6ab0a-330d-81fd-a465-f8944c3291e6",
+      "title": "🗃️ Modelo de Datos / ERD v1 — PostgreSQL",
+      "url": "https://app.notion.com/p/3df6ab0a330d81fda465f8944c3291e6?pvs=204",
+      "last_edited_at": "2026-09-29T22:45:02.267Z",
+      "fetch_snapshot_as_of": "2026-09-29T22:45:02.267Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-81fb-94c1-c237556999a0",
+      "title": "1️⃣ Diccionario 01 — Tenancy, Identidad, CRM, Agenda y Recepción",
+      "url": "https://app.notion.com/p/3e06ab0a330d81fb94c1c237556999a0?pvs=204",
+      "last_edited_at": "2026-09-29T22:44:53.182Z",
+      "fetch_snapshot_as_of": "2026-09-29T22:44:53.182Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-8179-b886-c1bbfd0e70f2",
+      "title": "2️⃣ Diccionario 02 — Órdenes, Diagnóstico, Cotizaciones y Operación",
+      "url": "https://app.notion.com/p/3e06ab0a330d8179b886c1bbfd0e70f2?pvs=204",
+      "last_edited_at": "2026-09-19T17:39:38.224Z",
+      "fetch_snapshot_as_of": "2026-09-19T17:39:38.224Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-8110-981a-f4b11ce837e0",
+      "title": "3️⃣ Diccionario 03 — Media, Comunicaciones, Billing y Pagos",
+      "url": "https://app.notion.com/p/3e06ab0a330d8110981af4b11ce837e0?pvs=204",
+      "last_edited_at": "2026-09-19T05:33:15.729Z",
+      "fetch_snapshot_as_of": "2026-09-19T05:33:15.729Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-815d-8559-cd85974347bc",
+      "title": "4️⃣ Diccionario 04 — Privacidad y Plataforma",
+      "url": "https://app.notion.com/p/3e06ab0a330d815d8559cd85974347bc?pvs=204",
+      "last_edited_at": "2026-09-29T05:16:14.516Z",
+      "fetch_snapshot_as_of": "2026-09-29T05:16:14.516Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-81df-89c9-f3be92795302",
+      "title": "5️⃣ Diccionario 05 — Inventario y Analítica Comercial",
+      "url": "https://app.notion.com/p/3e06ab0a330d81df89c9f3be92795302?pvs=204",
+      "last_edited_at": "2026-09-19T18:02:56.938Z",
+      "fetch_snapshot_as_of": "2026-09-19T18:02:56.938Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-8190-80ed-fe450a75a7f5",
+      "title": "🔄 Estados y Transiciones por Dominio v1",
+      "url": "https://app.notion.com/p/3e06ab0a330d819080edfe450a75a7f5?pvs=204",
+      "last_edited_at": "2026-09-19T17:43:13.530Z",
+      "fetch_snapshot_as_of": "2026-09-19T17:43:13.530Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3de6ab0a-330d-80cc-94e0-dc6f270efdf0",
+      "title": "Metodologia Scrum 2 week  + Gates (RoadMap)",
+      "url": "https://app.notion.com/p/3de6ab0a330d80cc94e0dc6f270efdf0?pvs=204",
+      "last_edited_at": "2026-09-20T00:51:26.521Z",
+      "fetch_snapshot_as_of": "2026-09-29T22:45:08.831Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3df6ab0a-330d-81ed-9345-c56bb7c97439",
+      "title": "🔐 ADR-006 — Clerk como proveedor de identidad",
+      "url": "https://app.notion.com/p/3df6ab0a330d81ed9345c56bb7c97439?pvs=204",
+      "last_edited_at": "2026-09-20T20:28:30.180Z",
+      "fetch_snapshot_as_of": "2026-09-20T20:28:30.180Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-810b-95df-e7a163cfa782",
+      "title": "🎥 ADR-003 — Media directa a Cloudflare R2 mediante URLs firmadas",
+      "url": "https://app.notion.com/p/3e06ab0a330d810b95dfe7a163cfa782?pvs=204",
+      "last_edited_at": "2026-09-19T05:08:19.558Z",
+      "fetch_snapshot_as_of": "2026-09-19T05:08:19.628Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3df6ab0a-330d-81e2-a93c-f52f0e6c12d7",
+      "title": "🛡️ Protección de Datos Personales — Colombia v1",
+      "url": "https://app.notion.com/p/3df6ab0a330d81e2a93cf52f0e6c12d7?pvs=204",
+      "last_edited_at": "2026-09-29T04:57:14.752Z",
+      "fetch_snapshot_as_of": "2026-09-29T04:57:14.752Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-81cc-932d-c2c9725121e7",
+      "title": "🛡️ Security Baseline — Aplicación y Plataforma",
+      "url": "https://app.notion.com/p/3e06ab0a330d81cc932dc2c9725121e7?pvs=204",
+      "last_edited_at": "2026-09-20T20:25:13.173Z",
+      "fetch_snapshot_as_of": "2026-09-20T20:25:13.173Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-813b-aa30-dbcff20a874b",
+      "title": "📦 Inventario y Dashboard Comercial v1 — TallerMecario",
+      "url": "https://app.notion.com/p/3e06ab0a330d813baa30dbcff20a874b?pvs=204",
+      "last_edited_at": "2026-09-20T20:26:23.823Z",
+      "fetch_snapshot_as_of": "2026-09-20T20:26:23.823Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-8192-ae92-d938f0d3ab3c",
+      "title": "🔟 ADR-010 — Inventario transaccional, cotización suplementaria y atribución comercial",
+      "url": "https://app.notion.com/p/3e06ab0a330d8192ae92d938f0d3ab3c?pvs=204",
+      "last_edited_at": "2026-09-19T18:03:53.445Z",
+      "fetch_snapshot_as_of": "2026-09-19T18:03:53.445Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-81e0-9488-cfddd222efdc",
+      "title": "🏢 ADR-002 — Multitenancy pooled con PostgreSQL compartido + tenant_id",
+      "url": "https://app.notion.com/p/3e06ab0a330d81e09488cfddd222efdc?pvs=204",
+      "last_edited_at": "2026-09-19T05:08:19.558Z",
+      "fetch_snapshot_as_of": "2026-09-19T05:08:19.614Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-819e-a376-f6f7628679f6",
+      "title": "⚙️ Operación, Retención, Recuperación y Observabilidad v1 — TallerMecario",
+      "url": "https://app.notion.com/p/3e06ab0a330d819ea376f6f7628679f6?pvs=204",
+      "last_edited_at": "2026-09-28T14:28:21.555Z",
+      "fetch_snapshot_as_of": "2026-09-28T14:28:21.555Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3df6ab0a-330d-8184-86e9-dd6f06b5f573",
+      "title": "🚦 Quality Gates — Reglas y Pruebas por Sprint",
+      "url": "https://app.notion.com/p/3df6ab0a330d818486e9dd6f06b5f573?pvs=204",
+      "last_edited_at": "2026-09-29T22:45:08.831Z",
+      "fetch_snapshot_as_of": "2026-09-29T22:45:08.831Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-814a-aa72-e80f2a7c7f10",
+      "title": "🔌 Contratos Externos — Wompi + WhatsApp v1",
+      "url": "https://app.notion.com/p/3e06ab0a330d814aaa72e80f2a7c7f10?pvs=204",
+      "last_edited_at": "2026-09-19T04:19:26.899Z",
+      "fetch_snapshot_as_of": "2026-09-19T04:19:26.899Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    },
+    {
+      "id": "3e06ab0a-330d-8108-ae45-e0e053e7675b",
+      "title": "💬 ADR-008 — WhatsApp por tenant con WABA propia y facturación directa Meta",
+      "url": "https://app.notion.com/p/3e06ab0a330d8108ae45e0e053e7675b?pvs=204",
+      "last_edited_at": "2026-09-19T04:35:59.430Z",
+      "fetch_snapshot_as_of": "2026-09-19T04:35:59.430Z",
+      "verification": {
+        "state": "unverified"
+      },
+      "truncated": "not_reported",
+      "unknown_block_count": "not_reported",
+      "unknown_tags": 0
+    }
+  ],
+  "outputs": [
+    {
+      "path": "docs/product/product-overview.md",
+      "title": "Producto y mapa funcional",
+      "source_ids": [
+        "3dd6ab0a-330d-80f6-ac30-e656cc016e2f"
+      ],
+      "sections": [
+        "síntesis editorial del mapa funcional; fuentes D-PRIV referenciadas"
+      ]
+    },
+    {
+      "path": "docs/product/mvp-and-sprint-scope.md",
+      "title": "Roadmap y alcance de Sprint 3",
+      "source_ids": [
+        "3de6ab0a-330d-80cc-94e0-dc6f270efdf0",
+        "3df6ab0a-330d-8184-86e9-dd6f06b5f573"
+      ],
+      "sections": [
+        "contenido completo",
+        "6, 7, 16"
+      ]
+    },
+    {
+      "path": "docs/domain/data-conventions.md",
+      "title": "Convenciones y mutabilidad del dominio",
+      "source_ids": [
+        "3e06ab0a-330d-815f-bb32-e6200f8d5417",
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a"
+      ],
+      "sections": [
+        "1, 2, 3",
+        "6"
+      ]
+    },
+    {
+      "path": "docs/domain/erd-domain-reference.md",
+      "title": "ERD seleccionado para frontend",
+      "source_ids": [
+        "3df6ab0a-330d-81fd-a465-f8944c3291e6"
+      ],
+      "sections": [
+        "2 + síntesis editorial de relaciones; ERD completo enlazado"
+      ]
+    },
+    {
+      "path": "docs/domain/roles-and-permissions.md",
+      "title": "RBAC y restricciones de recursos",
+      "source_ids": [
+        "3e06ab0a-330d-81d3-98ff-e925a65506c8"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/domain/states-and-transitions.md",
+      "title": "Estados y transiciones por dominio",
+      "source_ids": [
+        "3e06ab0a-330d-8190-80ed-fe450a75a7f5"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/domain/data-dictionary/01-identity-and-crm.md",
+      "title": "Identidad y CRM — campos canónicos",
+      "source_ids": [
+        "3e06ab0a-330d-81fb-94c1-c237556999a0"
+      ],
+      "sections": [
+        "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12"
+      ]
+    },
+    {
+      "path": "docs/domain/data-dictionary/02-agenda-and-reception.md",
+      "title": "Agenda, recepción, checklist, daños y firma",
+      "source_ids": [
+        "3e06ab0a-330d-81fb-94c1-c237556999a0"
+      ],
+      "sections": [
+        "13, 14, 15, 16, 17, 18"
+      ]
+    },
+    {
+      "path": "docs/domain/data-dictionary/03-orders-and-operation.md",
+      "title": "Órdenes, diagnóstico, cotización, reparación y entrega",
+      "source_ids": [
+        "3e06ab0a-330d-8179-b886-c1bbfd0e70f2"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/domain/data-dictionary/04-media-and-billing.md",
+      "title": "Media, comunicaciones y pagos",
+      "source_ids": [
+        "3e06ab0a-330d-8110-981a-f4b11ce837e0"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/domain/data-dictionary/05-privacy-and-offline.md",
+      "title": "Privacidad, sincronización y flags",
+      "source_ids": [
+        "3e06ab0a-330d-815d-8559-cd85974347bc"
+      ],
+      "sections": [
+        "1, 2, 3, 4, 8, 10"
+      ]
+    },
+    {
+      "path": "docs/domain/data-dictionary/06-inventory-and-analytics.md",
+      "title": "Inventario y analítica",
+      "source_ids": [
+        "3e06ab0a-330d-81df-89c9-f3be92795302"
+      ],
+      "sections": [
+        "1, 2, 3, 4, 5, 6, 7, 9"
+      ]
+    },
+    {
+      "path": "docs/architecture/frontend-boundary.md",
+      "title": "Stack y responsabilidades del frontend",
+      "source_ids": [
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a"
+      ],
+      "sections": [
+        "1, 4, 5, 14, 20"
+      ]
+    },
+    {
+      "path": "docs/architecture/authentication-and-workshop.md",
+      "title": "Identidad, taller activo y permisos",
+      "source_ids": [
+        "3df6ab0a-330d-81ed-9345-c56bb7c97439",
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a"
+      ],
+      "sections": [
+        "3, 5, 6, 7, 10, 11, 13, 14",
+        "5"
+      ]
+    },
+    {
+      "path": "docs/architecture/media.md",
+      "title": "Media directa a R2 y retención",
+      "source_ids": [
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a",
+        "3e06ab0a-330d-810b-95df-e7a163cfa782",
+        "3e06ab0a-330d-819e-a376-f6f7628679f6"
+      ],
+      "sections": [
+        "8",
+        "contenido completo",
+        "2.2–2.3"
+      ]
+    },
+    {
+      "path": "docs/architecture/pwa-offline.md",
+      "title": "PWA, almacenamiento local y sincronización",
+      "source_ids": [
+        "3e06ab0a-330d-81a5-8a05-dabdf042f145",
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a"
+      ],
+      "sections": [
+        "contenido completo",
+        "9"
+      ]
+    },
+    {
+      "path": "docs/security/frontend-security.md",
+      "title": "Seguridad aplicable a la PWA",
+      "source_ids": [
+        "3e06ab0a-330d-81cc-932d-c2c9725121e7"
+      ],
+      "sections": [
+        "1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18"
+      ]
+    },
+    {
+      "path": "docs/privacy/privacy-product-requirements.md",
+      "title": "Privacidad que afecta a formularios y capturas",
+      "source_ids": [
+        "3df6ab0a-330d-81e2-a93c-f52f0e6c12d7",
+        "3e06ab0a-330d-815d-8559-cd85974347bc"
+      ],
+      "sections": [
+        "Protección Datos §§1–7,12,14; Diccionario 04 §1 enlazado"
+      ]
+    },
+    {
+      "path": "docs/api/conventions-and-errors.md",
+      "title": "Convenciones API y errores seguros",
+      "source_ids": [
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a",
+        "3e06ab0a-330d-819e-a376-f6f7628679f6",
+        "3e06ab0a-330d-8190-80ed-fe450a75a7f5"
+      ],
+      "sections": [
+        "13 introducción",
+        "6.7",
+        "9"
+      ]
+    },
+    {
+      "path": "docs/api/membership-invitations.md",
+      "title": "Invitaciones internas",
+      "source_ids": [
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a"
+      ],
+      "sections": [
+        "13.1"
+      ]
+    },
+    {
+      "path": "docs/api/memberships.md",
+      "title": "Roles y ciclo de vida de memberships",
+      "source_ids": [
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a"
+      ],
+      "sections": [
+        "13.2–13.3"
+      ]
+    },
+    {
+      "path": "docs/api/crm.md",
+      "title": "Contratos HTTP de clientes, vehículos y propietarios",
+      "source_ids": [
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a"
+      ],
+      "sections": [
+        "13.4"
+      ]
+    },
+    {
+      "path": "docs/api/reception-and-media-contract-status.md",
+      "title": "Contrato pendiente de recepción y media",
+      "source_ids": [
+        "3de6ab0a-330d-817a-b78b-cbd88c100e5a",
+        "3e06ab0a-330d-81fb-94c1-c237556999a0"
+      ],
+      "sections": [
+        "13 lista baseline",
+        "15, 16, 17, 18"
+      ]
+    },
+    {
+      "path": "docs/api/public-customer-access.md",
+      "title": "Acceso público y autorización de cotización",
+      "source_ids": [
+        "3e06ab0a-330d-814a-aa72-e80f2a7c7f10",
+        "3e06ab0a-330d-8110-981a-f4b11ce837e0"
+      ],
+      "sections": [
+        "6.1–6.2",
+        "7"
+      ]
+    },
+    {
+      "path": "docs/product/inventory-and-business-dashboard.md",
+      "title": "Inventario, mano de obra adicional y dashboard",
+      "source_ids": [
+        "3e06ab0a-330d-813b-aa30-dbcff20a874b"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/quality/frontend-relevant-gates.md",
+      "title": "Gates funcionales que debe contemplar frontend",
+      "source_ids": [
+        "3df6ab0a-330d-8184-86e9-dd6f06b5f573"
+      ],
+      "sections": [
+        "1, 2, 6, 7, 8, 16, 17, 20, 21, 22"
+      ]
+    },
+    {
+      "path": "docs/decisions/ADR-003-media.md",
+      "title": "🎥 ADR-003 — Media directa a Cloudflare R2 mediante URLs firmadas",
+      "source_ids": [
+        "3e06ab0a-330d-810b-95df-e7a163cfa782"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/decisions/ADR-005-pwa-offline.md",
+      "title": "📱 ADR-005 — PWA + IndexedDB para operación offline",
+      "source_ids": [
+        "3e06ab0a-330d-81a5-8a05-dabdf042f145"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/decisions/ADR-006-identity.md",
+      "title": "🔐 ADR-006 — Clerk como proveedor de identidad",
+      "source_ids": [
+        "3df6ab0a-330d-81ed-9345-c56bb7c97439"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/decisions/ADR-002-multitenancy.md",
+      "title": "🏢 ADR-002 — Multitenancy pooled con PostgreSQL compartido + tenant_id",
+      "source_ids": [
+        "3e06ab0a-330d-81e0-9488-cfddd222efdc"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/decisions/ADR-008-whatsapp.md",
+      "title": "💬 ADR-008 — WhatsApp por tenant con WABA propia y facturación directa Meta",
+      "source_ids": [
+        "3e06ab0a-330d-8108-ae45-e0e053e7675b"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    },
+    {
+      "path": "docs/decisions/ADR-010-inventory.md",
+      "title": "🔟 ADR-010 — Inventario transaccional, cotización suplementaria y atribución comercial",
+      "source_ids": [
+        "3e06ab0a-330d-8192-ae92-d938f0d3ab3c"
+      ],
+      "sections": [
+        "contenido completo"
+      ]
+    }
+  ],
+  "editorial_files": [
+    "docs/README.md",
+    "docs/OPEN-QUESTIONS.md",
+    "docs/product/product-overview.md"
+  ],
+  "excluded": "Backend DDL/RLS implementations, backup/restore, worker/outbox/webhook internals, runbooks; original pages unchanged."
+}
