@@ -99,6 +99,15 @@ Para overrides locales, copia `.env.example` a `.env.local` (ignorado por git).
 
 > Un build local no demuestra que el CI remoto, el despliegue, la instalación PWA ni la integración con el backend funcionen.
 
+## Autenticación y contexto de taller (G1–G4)
+
+- **Identidad:** Clerk (`@clerk/react`) se importa **solo** en `src/features/auth/clerk-session.tsx`; el resto del código depende del puerto `AuthSessionPort`. Clerk establece la identidad verificada; el backend de TallerMecario establece memberships y permisos.
+- **Token:** se pide por petición (`getToken()`); nunca se guarda en estado de React, almacenamiento ni logs. Tras un `401` hay **un único** reintento con token fresco y el mismo `scope`.
+- **Transporte:** `src/shared/api` implementa únicamente `GET` (sin mutaciones), con lista blanca de rutas `/api/v1/…`, validación de la URL final, `redirect: 'manual'`, `credentials: 'omit'` y `cache: 'no-store'`.
+- **Sin cierre de sesión automático ante un 401 persistente** (decisión de producto pendiente, TA-09).
+- **G5 pendiente de TA-01:** mientras no exista `contextSource` (contrato de contexto sin congelar), una sesión iniciada termina en `signed_in_context_pending`: **no** se llama al backend ni se concede acceso a talleres.
+- **Sin persistencia:** el taller activo, la identidad y el token viven solo en memoria.
+
 ---
 
 # TallerMecario — documentación frontend
