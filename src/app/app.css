@@ -543,3 +543,17 @@ dd {
 .ui-status-banner__actions {
   margin-left: auto;
 }
+
+/* Reception Intake: use shell tokens and wrap naturally on workshop mobile/tablet screens. */
+.reception-page { display: grid; gap: var(--tm-space-4); }
+.reception-fields, .reception-filters { display: grid; gap: var(--tm-space-4); padding: var(--tm-space-4); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); }
+.reception-page label { display: grid; gap: var(--tm-space-2); }
+.reception-page input, .reception-page textarea, .reception-page select { font: inherit; width: 100%; padding: var(--tm-space-3); border: 1px solid var(--tm-border-strong); border-radius: var(--tm-radius-sm); background: var(--tm-surface); color: var(--tm-text); }
+.reception-page input[type="checkbox"] { width: auto; justify-self: start; }
+.reception-page button { font: inherit; min-height: 44px; padding: var(--tm-space-2) var(--tm-space-4); cursor: pointer; margin: var(--tm-space-1); }
+.reception-page button:disabled { cursor: default; }
+.reception-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.reception-list { padding: 0; list-style: none; display: grid; gap: var(--tm-space-3); }
+.reception-list li { padding: var(--tm-space-4); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); }
+.reception-page code { overflow-wrap: anywhere; }
+@media (min-width: 48rem) { .reception-fields { grid-template-columns: 1fr 1fr; } }

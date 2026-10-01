@@ -13,7 +13,7 @@ import { shellStatusOf } from './shell-status';
  * caso se delega en el `AuthGate` existente, que sigue siendo el dueño de esos estados.
  */
 export function AuthenticatedRoot() {
-  const { state, actions } = useAuthContext();
+  const { state, actions, apiClient } = useAuthContext();
   const shellStatus = shellStatusOf(state);
 
   if (shellStatus === null) {
@@ -23,7 +23,8 @@ export function AuthenticatedRoot() {
   const grantedPermissions = new Set(state.kind === 'ready' ? state.context?.permissions.map((permission) => permission.code) ?? [] : []);
   return (
     <BrowserRouter>
-      <AppRoutes shellStatus={shellStatus} onSignOut={actions.onSignOut} grantedPermissions={grantedPermissions} onChangeWorkshop={actions.onChangeWorkshop} workshopName={state.kind === 'ready' ? state.context?.workshop.displayName : undefined} />
+      <AppRoutes receptionRuntime={state.kind === 'ready' && state.context !== undefined ? { apiClient, identity: state.identity, tenantId: state.tenantId, permissions: state.context.permissions } : undefined} shellStatus={shellStatus} onSignOut={actions.onSignOut} grantedPermissions={grantedPermissions} onChangeWorkshop={actions.onChangeWorkshop} workshopName={state.kind === 'ready' ? state.context?.workshop.displayName : undefined} />
     </BrowserRouter>
   );
 }
+

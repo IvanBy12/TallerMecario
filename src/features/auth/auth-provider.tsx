@@ -35,6 +35,7 @@ const INITIAL_STORE: AuthStore = { generation: 0, attempt: 0, auth: { kind: 'loa
 export interface AuthContextValue {
   readonly state: AuthState;
   readonly actions: AuthGateActions;
+  readonly apiClient: ApiClient;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -231,8 +232,8 @@ export function AuthContextProvider(props: AuthContextProviderProps) {
   );
 
   const value = useMemo<AuthContextValue>(
-    () => ({ state: store.auth, actions }),
-    [actions, store.auth],
+    () => ({ state: store.auth, actions, apiClient: props.apiClient }),
+    [actions, store.auth, props.apiClient],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -286,3 +287,4 @@ function ClerkAuthContext({
     </AuthContextProvider>
   );
 }
+

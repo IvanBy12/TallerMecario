@@ -34,17 +34,28 @@ export interface ApiClientDeps {
   readonly timeoutMs?: number; // por defecto 10_000; cubre getToken() + fetch + lectura del cuerpo
 }
 
+export type JsonValue = null | boolean | number | string | readonly JsonValue[] | JsonObject;
+export interface JsonObject { readonly [key: string]: JsonValue }
+export type QueryParams = Readonly<Record<string, string | number | boolean | undefined>>;
+
 export interface GetRequest {
+  readonly query?: QueryParams;
   readonly path: string; // lista blanca estricta (abajo); sin query ni fragmento
   readonly tenantId?: string; // UUID canónico en minúsculas; se envía como X-Tenant-Id (uso real: G5)
   readonly signal: AbortSignal; // obligatorio: cancelación por contexto
   readonly tokenPolicy: TokenPolicy; // explícito en cada request; lo decide el proveedor
 }
 
+export interface JsonRequest extends Omit<GetRequest, 'query'> {
+  readonly body: JsonObject;
+}
+
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; failure: ApiFailure };
 
 export interface ApiClient {
-  getJson<T>(request: GetRequest, parse: (body: unknown) => T | null): Promise<ApiResult<T>>;
+  getJson: <T>(request: GetRequest, parse: (body: unknown) => T | null) => Promise<ApiResult<T>>;
+  postJson: <T>(request: JsonRequest, parse: (body: unknown) => T | null) => Promise<ApiResult<T>>;
+  patchJson: <T>(request: JsonRequest, parse: (body: unknown) => T | null) => Promise<ApiResult<T>>;
 }
 
 /** Solo segmentos de letras, dígitos, `_` y `-`: excluye `.`/`..`, `%`, `\`, `?`, `#`, espacios y `//`. */
@@ -70,11 +81,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const doFetch: FetchLike = deps.fetchImpl ?? fetch;
 
-  return {
-    async getJson<T>(request: GetRequest, parse: (body: unknown) => T | null): Promise<ApiResult<T>> {
+  async function send<T>(method: 'GET' | 'POST' | 'PATCH', request: GetRequest, parse: (body: unknown) => T | null, jsonRequest?: JsonRequest): Promise<ApiResult<T>> {
       // 1-3: validación de la petición (antes de pedir token y antes de red).
       const target = resolveTarget(deps.apiOrigin, request);
-      if (target === null) {
+      const bodyJson = jsonRequest === undefined ? undefined : serializeJsonObject(jsonRequest.body);
+      if (target === null || bodyJson === null || (method !== 'GET' && request.query !== undefined)) {
         return failure<T>({ source: 'client', reason: 'client_bug' });
       }
 
@@ -99,12 +110,13 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
           return failure<T>({ source: 'token', reason: tokenOutcome.kind });
         }
 
-        // 6: GET acotado.
+        // 6: Transporte acotado. POST/PATCH se envían una sola vez.
         let response: FetchResponse;
         try {
           response = await doFetch(target.url, {
-            method: 'GET',
-            headers: buildHeaders(tokenOutcome.token, target.tenantId),
+            method,
+            headers: buildHeaders(tokenOutcome.token, target.tenantId, method !== 'GET'),
+            ...(bodyJson === undefined ? {} : { body: bodyJson }),
             credentials: 'omit',
             cache: 'no-store',
             redirect: 'manual',
@@ -147,7 +159,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       } finally {
         control.dispose();
       }
-    },
+  }
+  return {
+    getJson: (request, parse) => send('GET', request, parse),
+    postJson: (request, parse) => send('POST', request, parse, request),
+    patchJson: (request, parse) => send('PATCH', request, parse, request),
   };
 }
 
@@ -165,11 +181,12 @@ function abortInput(control: AbortControl): {
   };
 }
 
-function buildHeaders(token: string, tenantId: string | null): Record<string, string> {
+function buildHeaders(token: string, tenantId: string | null, json: boolean): Record<string, string> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',
   };
+  if (json) headers['Content-Type'] = 'application/json';
   if (tenantId !== null) {
     headers['X-Tenant-Id'] = tenantId;
   }
@@ -268,5 +285,57 @@ function resolveTarget(apiOrigin: string, request: GetRequest): ResolvedTarget |
   if (tenantId !== undefined && (!TENANT_ID_PATTERN.test(tenantId) || tenantId === '00000000-0000-0000-0000-000000000000' || tenantId === 'ffffffff-ffff-ffff-ffff-ffffffffffff')) {
     return null;
   }
+  if (request.query !== undefined) {
+    if (!isPlainObject(request.query)) return null;
+    const entries = Object.entries(request.query);
+    if (entries.length > 32) return null;
+    for (const [key, value] of entries) {
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) return null;
+      if (value === undefined) continue;
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return null;
+      if (typeof value === 'number' && !Number.isFinite(value)) return null;
+      const text = String(value);
+      if (text.length > 2000 || Array.from(text).some((char) => { const code = char.charCodeAt(0); return code <= 31 || (code >= 127 && code <= 159); })) return null;
+      url.searchParams.set(key, text);
+    }
+  }
   return { url: url.toString(), tenantId: tenantId ?? null };
 }
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Reject values JSON.stringify would silently omit, coerce or evaluate. */
+function serializeJsonObject(body: unknown): string | null {
+  const ancestors = new Set<object>();
+  const validate = (value: unknown, depth: number): boolean => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (depth > 64 || typeof value !== 'object' || ancestors.has(value)) return false;
+    if (!Array.isArray(value) && !isPlainObject(value)) return false;
+    ancestors.add(value);
+    const keys = Reflect.ownKeys(value);
+    const valid = keys.every((key) => {
+      if (Array.isArray(value) && key === 'length') return true;
+      if (typeof key !== 'string') return false;
+      if (Array.isArray(value) && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length)) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor !== undefined && descriptor.enumerable === true &&
+        'value' in descriptor && validate(descriptor.value, depth + 1);
+    }) && (!Array.isArray(value) || keys.length === value.length + 1);
+    ancestors.delete(value);
+    return valid;
+  };
+  try {
+    return isPlainObject(body) && validate(body, 0) ? JSON.stringify(body) : null;
+  } catch {
+    return null;
+  }
+}
+
+
+
+
