@@ -16,6 +16,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@clerk/react": "~6.17.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

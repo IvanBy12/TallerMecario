@@ -1,36 +1,17 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '@/app/App';
 
+const clerkKey = (environment: 'test' | 'live', payload = 'Zm9vLmJhcg') =>
+  ['pk', environment, payload].join('_');
+
 describe('App', () => {
-  it('caso 1: muestra el estado base con un entorno válido sin API', () => {
-    render(<App envResult={{ ok: true, env: { appEnv: 'local', apiOrigin: null } }} />);
-
-    expect(screen.getByRole('main')).toBeDefined();
-    expect(screen.getByRole('heading', { level: 1, name: 'TallerMecario' })).toBeDefined();
-    expect(screen.getByText('Entorno')).toBeDefined();
-    expect(screen.getByText('local')).toBeDefined();
-    expect(screen.getByText('API del backend')).toBeDefined();
-    expect(screen.getByText('No configurada')).toBeDefined();
-    expect(screen.queryByRole('alert')).toBeNull();
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('caso 2: indica que la API está configurada sin mostrar su valor', () => {
-    render(
-      <App
-        envResult={{
-          ok: true,
-          env: { appEnv: 'production', apiOrigin: 'https://api.example.test' },
-        }}
-      />,
-    );
-
-    expect(screen.getByText('Configurada')).toBeDefined();
-    expect(screen.queryByText(/api\.example\.test/)).toBeNull();
-  });
-
-  it('caso 3: muestra los issues de configuración sin el bloque de estado', () => {
+  it('caso 1: entorno público inválido muestra la pantalla de configuración', () => {
     render(
       <App
         envResult={{
@@ -43,12 +24,50 @@ describe('App', () => {
       />,
     );
 
+    expect(screen.getByRole('main')).toBeDefined();
+    expect(screen.getByRole('heading', { level: 1, name: 'TallerMecario' })).toBeDefined();
     expect(screen.getByRole('alert')).toBeDefined();
     expect(
       screen.getByRole('heading', { level: 2, name: 'Configuración pública inválida' }),
     ).toBeDefined();
     expect(screen.getByText('VITE_APP_ENV')).toBeDefined();
     expect(screen.getByText('VITE_API_BASE_URL')).toBeDefined();
-    expect(screen.queryByText('Entorno')).toBeNull();
+  });
+
+  it('caso 2: sin apiOrigin no monta Clerk ni hace red (config_error)', () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    render(
+      <App
+        envResult={{
+          ok: true,
+          env: { appEnv: 'local', apiOrigin: null, clerkPublishableKey: clerkKey('test') },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(screen.getByText('VITE_CLERK_PUBLISHABLE_KEY')).toBeDefined();
+    expect(screen.getByText('VITE_API_BASE_URL')).toBeDefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('caso 3: sin clave publicable tampoco monta Clerk ni hace red (config_error)', () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    render(
+      <App
+        envResult={{
+          ok: true,
+          env: {
+            appEnv: 'production',
+            apiOrigin: 'https://api.example.test',
+            clerkPublishableKey: null,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(screen.getByText('VITE_CLERK_PUBLISHABLE_KEY')).toBeDefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

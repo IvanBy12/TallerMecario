@@ -17,6 +17,17 @@ const TEST_INFRA_PATTERNS = [
   },
 ];
 
+/**
+ * Aislamiento de Clerk (D-A04, AC-A04): `@clerk/*` solo se importa desde
+ * `src/features/auth/clerk-session.tsx`. El resto del código depende de `AuthSessionPort`.
+ */
+const CLERK_PATTERNS = [
+  {
+    group: ['@clerk', '@clerk/**'],
+    message: 'Solo src/features/auth/clerk-session.tsx puede importar @clerk/*.',
+  },
+];
+
 const DYNAMIC_IMPORT_NON_LITERAL = {
   selector: "ImportExpression:not([source.type='Literal'])",
   message: 'import() solo con especificador literal.',
@@ -42,12 +53,15 @@ function importRules(files, patterns) {
       files,
       ignores: [TEST_FILES],
       rules: {
-        'no-restricted-imports': ['error', { patterns: [...patterns, ...TEST_INFRA_PATTERNS] }],
+        'no-restricted-imports': [
+          'error',
+          { patterns: [...CLERK_PATTERNS, ...patterns, ...TEST_INFRA_PATTERNS] },
+        ],
       },
     },
     {
       files: files.map((file) => file.replace('*.{ts,tsx}', '*.test.{ts,tsx}')),
-      rules: { 'no-restricted-imports': ['error', { patterns }] },
+      rules: { 'no-restricted-imports': ['error', { patterns: [...CLERK_PATTERNS, ...patterns] }] },
     },
   ];
 }
@@ -75,6 +89,13 @@ function subtreeImportRules(base, extraPatterns, message) {
   );
   return blocks;
 }
+
+const FEATURE_PATTERNS = [
+  { group: ['**/app', '**/app/**'], message: 'Una feature no puede depender de app.' },
+  { group: ['@/features', '@/features/**'], message: 'Una feature no importa otras features.' },
+];
+const FEATURE_RELATIVE_MESSAGE =
+  'Una feature no importa fuera de su propia carpeta con rutas relativas.';
 
 export default defineConfig([
   globalIgnores(['dist/', 'coverage/']),
@@ -114,7 +135,7 @@ export default defineConfig([
     files: ['**/*.js'],
     extends: [js.configs.recommended, tseslint.configs.disableTypeChecked],
   },
-  // --- Límites de capas (garantías y limitaciones: sección 3.2) ---
+  // --- Límites de capas (garantías y limitaciones: sección 3.2 de S3-B01) ---
   {
     files: ['src/**/*.{ts,tsx}'],
     rules: { 'no-restricted-syntax': ['error', ...BASE_SYNTAX] },
@@ -127,14 +148,24 @@ export default defineConfig([
     ['src/shared/**/*.{ts,tsx}'],
     [{ group: APP_AND_FEATURES, message: 'shared no puede depender de app ni de features.' }],
   ),
-  ...subtreeImportRules(
-    'src/features/*',
-    [
-      { group: ['**/app', '**/app/**'], message: 'Una feature no puede depender de app.' },
-      { group: ['@/features', '@/features/**'], message: 'Una feature no importa otras features.' },
-    ],
-    'Una feature no importa fuera de su propia carpeta con rutas relativas.',
-  ),
+  ...subtreeImportRules('src/features/*', FEATURE_PATTERNS, FEATURE_RELATIVE_MESSAGE),
+  // Excepción de aislamiento de Clerk: el módulo de sesión conserva TODAS las demás restricciones
+  // (no accede a app, a otras features, a infraestructura de pruebas ni sale de su carpeta).
+  {
+    files: ['src/features/auth/clerk-session.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            ...FEATURE_PATTERNS,
+            escapeRelative(0, FEATURE_RELATIVE_MESSAGE),
+            ...TEST_INFRA_PATTERNS,
+          ],
+        },
+      ],
+    },
+  },
   ...subtreeImportRules(
     'src/app',
     [],
