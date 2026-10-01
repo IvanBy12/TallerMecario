@@ -34,12 +34,21 @@ describe('Track A reception parsers', () => {
 });
 describe('intake form and OCC', () => {
     it('sends only changed fields and the exact microsecond token', () => {
-        expect(patchBody({ ...formOf(RECEPTION), mileageKm: '101' }, RECEPTION)).toEqual({ expectedUpdatedAt: TIME, mileageKm: 101 });
-        expect(patchBody(formOf(RECEPTION), RECEPTION)).toBeNull();
+        expect(patchBody({ ...formOf(RECEPTION), mileageKm: '101' }, RECEPTION, new Set(['mileageKm']))).toEqual({ expectedUpdatedAt: TIME, mileageKm: 101 });
+        expect(patchBody(formOf(RECEPTION), RECEPTION, new Set())).toBeNull();
     });
     it('normalizes multiline notes, clears nullable values and retains Unicode', () => {
         expect(intakeBody({ mileageKm: '0', fuelLevelPct: '', customerNotes: '  A\r\nB  ', advisorNotes: ' ' })).toEqual({ mileageKm: 0, fuelLevelPct: null, customerNotes: 'A\nB', advisorNotes: null });
         expect(intakeBody({ ...EMPTY_FORM, mileageKm: '2147483647', customerNotes: '🔧' })).not.toBeNull();
     });
     it.each([{ mileageKm: '-1' }, { mileageKm: '1.5' }, { mileageKm: '2147483648' }, { fuelLevelPct: '101' }, { customerNotes: '\t' }, { customerNotes: '\ud800' }, { customerNotes: 'a'.repeat(2001) }])('rejects invalid inputs %j', (patch) => { expect(intakeBody({ ...EMPTY_FORM, mileageKm: '100', ...patch })).toBeNull(); });
+});
+it('includes an explicitly cleared note against the reread baseline, without changing untouched remote fields', () => {
+    const fresh = '2026-10-01T15:04:05.999999Z';
+    const baseline = { ...RECEPTION, customerNotes: 'nota remota', advisorNotes: 'nota interna remota', updatedAt: fresh };
+    expect(patchBody(formOf(RECEPTION), baseline, new Set(['customerNotes']))).toEqual({ expectedUpdatedAt: fresh, customerNotes: null });
+});
+it('omits explicitly edited values that already match the current baseline', () => {
+    const baseline = { ...RECEPTION, mileageKm: 101, advisorNotes: 'nota interna remota' };
+    expect(patchBody({ ...formOf(RECEPTION), mileageKm: '101' }, baseline, new Set(['mileageKm']))).toBeNull();
 });

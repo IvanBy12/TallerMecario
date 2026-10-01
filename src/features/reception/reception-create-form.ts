@@ -6,6 +6,8 @@ export interface IntakeForm {
     readonly customerNotes: string;
     readonly advisorNotes: string;
 }
+export type IntakeField = keyof IntakeForm;
+export type EditedIntakeFields = ReadonlySet<IntakeField>;
 export const EMPTY_FORM: IntakeForm = { mileageKm: '', fuelLevelPct: '', customerNotes: '', advisorNotes: '' };
 export function formOf(r: Reception): IntakeForm { return { mileageKm: String(r.mileageKm), fuelLevelPct: r.fuelLevelPct === null ? '' : String(r.fuelLevelPct), customerNotes: r.customerNotes ?? '', advisorNotes: r.advisorNotes ?? '' }; }
 function notes(value: string): string | null | false {
@@ -31,13 +33,13 @@ export function intakeBody(form: IntakeForm): JsonObject | null {
     const customerNotes = notes(form.customerNotes), advisorNotes = notes(form.advisorNotes);
     return mileageKm > 2147483647 || (fuelLevelPct !== null && fuelLevelPct > 100) || customerNotes === false || advisorNotes === false ? null : { mileageKm, fuelLevelPct, customerNotes, advisorNotes };
 }
-export function patchBody(form: IntakeForm, baseline: Reception, original: Reception = baseline): JsonObject | null {
+export function patchBody(form: IntakeForm, baseline: Reception, editedFields: EditedIntakeFields): JsonObject | null {
     const body = intakeBody(form);
     if (body === null)
         return null;
     const patch: Record<string, string | number | null> = { expectedUpdatedAt: baseline.updatedAt };
     for (const key of ['mileageKm', 'fuelLevelPct', 'customerNotes', 'advisorNotes'] as const) {
-        if (body[key] !== original[key] && body[key] !== baseline[key])
+        if (editedFields.has(key) && body[key] !== baseline[key])
             patch[key] = body[key] as string | number | null;
     }
     return Object.keys(patch).length > 1 ? patch : null;

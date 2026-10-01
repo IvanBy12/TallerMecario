@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { can, useReception } from './reception-context';
 import type { ReceptionFilters } from './reception-api';
@@ -11,17 +11,35 @@ export function ReceptionsListPage() {
     const [status, setStatus] = useState<'' | 'open' | 'closed'>('');
     const [vehicle, setVehicle] = useState<Vehicle | null>(null);
     const [customer, setCustomer] = useState<Customer | null>(null);
-    const filters: ReceptionFilters = { ...(status === '' ? {} : { status }), ...(vehicle === null ? {} : { vehicleId: vehicle.vehicleId }), ...(customer === null ? {} : { customerId: customer.customerId }) };
+    const canReadVehicles = can(permissions, 'vehicles.read', true);
+    const canReadCustomers = can(permissions, 'customers.read', true);
+    const vehicleId = canReadVehicles ? vehicle?.vehicleId : undefined;
+    const customerId = canReadCustomers ? customer?.customerId : undefined;
+    const filters = useMemo<ReceptionFilters>(() => ({
+        ...(status === '' ? {} : { status }),
+        ...(vehicleId === undefined ? {} : { vehicleId }),
+        ...(customerId === undefined ? {} : { customerId }),
+    }), [status, vehicleId, customerId]);
     return <section className="reception-page"><h1>Recepciones</h1>
-    {can(permissions, 'receptions.create', true) && <Link to="/recepciones/nueva">Nueva recepción</Link>}
-    {!can(permissions, 'receptions.read', true) ? <p role="alert">El listado requiere acceso de recepción al taller. Abre una recepción asignada mediante su enlace.</p> : <>
-      <div className="reception-filters"><label>Estado<select value={status} onChange={(e) => { const v = e.target.value; if (v === '' || v === 'open' || v === 'closed')
-            setStatus(v); }}><option value="">Todos</option><option value="open">Abiertas</option><option value="closed">Cerradas</option></select></label>
-        <ReceptionPicker kind="vehicle" onVehicle={setVehicle}/>{vehicle !== null && <p>Vehículo: {vehicle.plate} <button type="button" onClick={() => { setVehicle(null); }}>Quitar vehículo</button></p>}
-        <ReceptionPicker kind="customer" onCustomer={setCustomer}/>{customer !== null && <p>Cliente: {customer.firstName} {customer.lastName} <button type="button" onClick={() => { setCustomer(null); }}>Quitar cliente</button></p>}
-      </div><ReceptionResults key={`${status}:${vehicle?.vehicleId ?? ''}:${customer?.customerId ?? ''}`} filters={filters}/>
-    </>}
-  </section>;
+        {can(permissions, 'receptions.create', true) && <Link to="/recepciones/nueva">Nueva recepción</Link>}
+        {!can(permissions, 'receptions.read', true) ? <p role="alert">El listado requiere acceso de recepción al taller. Abre una recepción asignada mediante su enlace.</p> : <>
+            <div className="reception-filters">
+                <label>Estado<select value={status} onChange={(e) => { const value = e.target.value; if (value === '' || value === 'open' || value === 'closed')
+            setStatus(value); }}>
+                    <option value="">Todos</option><option value="open">Abiertas</option><option value="closed">Cerradas</option>
+                </select></label>
+                {canReadVehicles && <>
+                    <ReceptionPicker kind="vehicle" onVehicle={setVehicle}/>
+                    {vehicle !== null && <p>Vehículo: {vehicle.plate} <button type="button" onClick={() => { setVehicle(null); }}>Quitar vehículo</button></p>}
+                </>}
+                {canReadCustomers && <>
+                    <ReceptionPicker kind="customer" onCustomer={setCustomer}/>
+                    {customer !== null && <p>Cliente: {customer.firstName} {customer.lastName} <button type="button" onClick={() => { setCustomer(null); }}>Quitar cliente</button></p>}
+                </>}
+            </div>
+            <ReceptionResults key={`${status}:${vehicleId ?? ''}:${customerId ?? ''}`} filters={filters}/>
+        </>}
+    </section>;
 }
 function ReceptionResults({ filters }: {
     readonly filters: ReceptionFilters;

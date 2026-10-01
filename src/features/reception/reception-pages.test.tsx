@@ -263,3 +263,86 @@ describe('context and asynchronous isolation', () => {
         expect(screen.queryByRole('button', { name: 'Editar recepción' })).toBeNull();
     });
 });
+describe('intake review regressions', () => {
+    it('tracks an explicitly cleared customer note after a version conflict', async () => {
+        let patches = 0, reads = 0;
+        const fresh = '2026-10-01T15:04:05.999999Z';
+        const h = renderReception(`/recepciones/${IDS.reception}`, (call) => {
+            if (call.init.method === 'PATCH') {
+                patches += 1;
+                return patches === 1 ? errorResponse('RESOURCE_VERSION_CONFLICT') : jsonResponse({ reception: { ...RECEPTION, mileageKm: 101, customerNotes: null, advisorNotes: 'nota interna remota', updatedAt: fresh } });
+            }
+            reads += 1;
+            return jsonResponse({ reception: reads === 1 ? DETAIL : { ...DETAIL, customerNotes: 'nota remota', advisorNotes: 'nota interna remota', updatedAt: fresh } });
+        });
+        await click('Editar recepción');
+        fill('Kilometraje (km)', '101');
+        await click('Guardar cambios');
+        await screen.findByRole('button', { name: 'He revisado la versión actual' });
+        expect(screen.getByLabelText<HTMLTextAreaElement>('Observaciones del cliente').value).toBe('');
+        expect(screen.getByLabelText<HTMLInputElement>('Kilometraje (km)').value).toBe('101');
+        fill('Observaciones del cliente', 'nota escrita después del conflicto');
+        fill('Observaciones del cliente', '');
+        await click('He revisado la versión actual');
+        await click('Guardar cambios');
+        await screen.findByText('101 km');
+        expect(bodyOf(h.calls.filter((call) => call.init.method === 'PATCH')[1])).toEqual({ expectedUpdatedAt: fresh, mileageKm: 101, customerNotes: null });
+    });
+    it('keeps both cursor pages on an equivalent list rerender', async () => {
+        const h = renderReception('/recepciones', (call) => jsonResponse({ receptions: [{ ...SUMMARY, receptionId: call.url.searchParams.has('cursor') ? IDS.other : IDS.reception }], nextCursor: call.url.searchParams.has('cursor') ? null : 'cursor_one' }));
+        await screen.findByRole('link', { name: /Abrir recepción/ });
+        await click('Cargar más');
+        await waitFor(() => { expect(screen.getAllByRole('link', { name: /Abrir recepción/ })).toHaveLength(2); });
+        await act(async () => { h.updateRuntime({ ...h.runtime }); await Promise.resolve(); });
+        expect(h.calls.filter((call) => call.url.pathname === '/api/v1/receptions' && !call.url.searchParams.has('cursor'))).toHaveLength(1);
+        expect(h.calls).toHaveLength(2);
+        expect(screen.getAllByRole('link', { name: /Abrir recepción/ }).map((link) => link.getAttribute('href'))).toEqual([`/recepciones/${IDS.reception}`, `/recepciones/${IDS.other}`]);
+    });
+    it.each([
+        { name: 'receptions.read only', vehicle: false, customer: false },
+        { name: 'receptions.read and vehicles.read', vehicle: true, customer: false },
+        { name: 'receptions.read and customers.read', vehicle: false, customer: true },
+        { name: 'all three tenant read permissions', vehicle: true, customer: true },
+    ])('gates CRM selectors independently with $name', async ({ vehicle, customer }) => {
+        const permissions = [
+            { code: 'receptions.read', scopes: ['tenant'] },
+            ...(vehicle ? [{ code: 'vehicles.read', scopes: ['tenant'] }] : []),
+            ...(customer ? [{ code: 'customers.read', scopes: ['tenant'] }] : []),
+        ];
+        const h = renderReception('/recepciones', defaults, permissions);
+        await screen.findByRole('link', { name: /Abrir recepción/ });
+        expect(screen.queryByLabelText('Buscar vehículo por placa') !== null).toBe(vehicle);
+        expect(screen.queryByLabelText('Buscar cliente por nombre') !== null).toBe(customer);
+        expect(screen.queryByRole('button', { name: 'Buscar vehículo' }) !== null).toBe(vehicle);
+        expect(screen.queryByRole('button', { name: 'Buscar cliente' }) !== null).toBe(customer);
+        fireEvent.keyDown(screen.getByLabelText('Estado'), { key: 'Enter' });
+        fill('Estado', 'open');
+        await waitFor(() => { expect(h.calls.some((call) => call.url.search === '?limit=25&status=open')).toBe(true); });
+        if (vehicle) {
+            fill('Buscar vehículo por placa', 'ABC123');
+            await click('Buscar vehículo');
+            await click('ABC123 — Marca de prueba Modelo de prueba');
+        }
+        if (customer) {
+            fill('Buscar cliente por nombre', 'Ana');
+            await click('Buscar cliente');
+            await click('Ana Prueba');
+        }
+        await act(async () => { await Promise.resolve(); });
+        expect(h.calls.filter((call) => call.url.pathname === '/api/v1/vehicles')).toHaveLength(vehicle ? 1 : 0);
+        expect(h.calls.filter((call) => call.url.pathname === '/api/v1/customers')).toHaveLength(customer ? 1 : 0);
+    });
+    it('does not allow assigned CRM scopes to enable tenant search selectors', async () => {
+        const h = renderReception('/recepciones', defaults, [
+            { code: 'receptions.read', scopes: ['tenant'] },
+            { code: 'vehicles.read', scopes: ['assigned'] },
+            { code: 'customers.read', scopes: ['assigned'] },
+        ]);
+        await screen.findByRole('link', { name: /Abrir recepción/ });
+        expect(screen.queryByRole('button', { name: 'Buscar vehículo' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Buscar cliente' })).toBeNull();
+        fill('Estado', 'open');
+        await waitFor(() => { expect(h.calls.some((call) => call.url.search === '?limit=25&status=open')).toBe(true); });
+        expect(h.calls.some((call) => call.url.pathname === '/api/v1/vehicles' || call.url.pathname === '/api/v1/customers')).toBe(false);
+    });
+});

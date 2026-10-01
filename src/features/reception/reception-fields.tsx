@@ -1,10 +1,11 @@
-import type { IntakeForm } from './reception-create-form';
-export function ReceptionFields({ form, onChange, disabled = false }: {
+import type { IntakeField, IntakeForm } from './reception-create-form';
+export function ReceptionFields({ form, onChange, onFieldEdited, disabled = false }: {
     readonly form: IntakeForm;
     readonly onChange: (form: IntakeForm) => void;
+    readonly onFieldEdited?: (field: IntakeField) => void;
     readonly disabled?: boolean;
 }) {
-    const change = (key: keyof IntakeForm, value: string) => { onChange({ ...form, [key]: value }); };
+    const change = (key: IntakeField, value: string) => { onChange({ ...form, [key]: value }); onFieldEdited?.(key); };
     return <fieldset disabled={disabled} className="reception-fields"><legend>Datos de ingreso</legend>
     <label>Kilometraje (km)<input required type="number" min="0" max="2147483647" step="1" value={form.mileageKm} onChange={(e) => { change('mileageKm', e.target.value); }}/></label>
     <label>Combustible (%)<input type="number" min="0" max="100" step="1" value={form.fuelLevelPct} onChange={(e) => { change('fuelLevelPct', e.target.value); }}/></label>

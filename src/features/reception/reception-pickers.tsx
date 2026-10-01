@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useReception } from './reception-context';
+import { can, useReception } from './reception-context';
 import type { Customer, Vehicle } from './reception-contract';
 import { RequestReference } from './request-reference';
 import { useReceptionAction } from './use-reception-action';
@@ -9,7 +9,7 @@ export function ReceptionPicker({ kind, onVehicle, onCustomer, disabled = false 
     readonly onCustomer?: (customer: Customer) => void;
     readonly disabled?: boolean;
 }) {
-    const { api } = useReception();
+    const { api, permissions } = useReception();
     const action = useReceptionAction();
     const [query, setQuery] = useState('');
     const [submitted, setSubmitted] = useState('');
@@ -19,7 +19,11 @@ export function ReceptionPicker({ kind, onVehicle, onCustomer, disabled = false 
     const [searched, setSearched] = useState(false);
     const [invalid, setInvalid] = useState(false);
     const vehicle = kind === 'vehicle';
+    const allowed = can(permissions, vehicle ? 'vehicles.read' : 'customers.read', true);
+    const unavailable = disabled || action.blocked || !allowed;
     const search = (more = false) => {
+        if (unavailable)
+            return;
         const normalized = vehicle ? query.trim().replace(/[ .-]/g, '').toUpperCase() : query.normalize('NFC').trim();
         if (!more && (vehicle ? (!/^[A-Za-z0-9 .-]+$/.test(query.trim()) || !/^[A-Z0-9]{1,16}$/.test(normalized)) : !normalized || Array.from(normalized).some((char) => { const code = char.charCodeAt(0); return code <= 31 || (code >= 127 && code <= 159); }))) {
             setInvalid(true);
@@ -40,17 +44,19 @@ export function ReceptionPicker({ kind, onVehicle, onCustomer, disabled = false 
         else
             void action.run(() => api.customers(filter, next), (data) => { setCustomers((items) => more ? [...items, ...data.customers.filter((c) => !items.some((old) => old.customerId === c.customerId))] : data.customers); setCursor(data.nextCursor); setSearched(true); });
     };
-    return <div className="reception-picker"><label>{vehicle ? 'Buscar vehículo por placa' : 'Buscar cliente por nombre'}<input value={query} disabled={disabled || action.blocked} onChange={(e) => { setQuery(e.target.value); }} onKeyDown={(e) => { if (e.key === 'Enter') {
-        e.preventDefault();
-        if (!action.blocked && !disabled)
-            search();
-    } }}/></label>
-    <button type="button" disabled={disabled || action.blocked} onClick={() => { search(); }}>Buscar {vehicle ? 'vehículo' : 'cliente'}</button>
+    return <div className="reception-picker"><label>{vehicle ? 'Buscar vehículo por placa' : 'Buscar cliente por nombre'}<input value={query} disabled={unavailable} onChange={(e) => { setQuery(e.target.value); }} onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (!unavailable)
+                    search();
+            }
+        }}/></label>
+    <button type="button" disabled={unavailable} onClick={() => { search(); }}>Buscar {vehicle ? 'vehículo' : 'cliente'}</button>
     {invalid && <p role="alert">{vehicle ? 'Ingresa una placa válida de 1 a 16 letras o números.' : 'Ingresa un nombre válido.'}</p>}
     {action.busy && <p role="status">Buscando…</p>}<RequestReference failure={action.failure}/>
-    {action.failure !== null && <button type="button" disabled={disabled || action.blocked} onClick={() => { search(); }}>Reintentar búsqueda</button>}
+    {action.failure !== null && <button type="button" disabled={unavailable} onClick={() => { search(); }}>Reintentar búsqueda</button>}
     {searched && (vehicle ? vehicles.length === 0 : customers.length === 0) && <p>No se encontraron resultados.</p>}
-    <ul>{vehicle ? vehicles.map((v) => <li key={v.vehicleId}><button type="button" disabled={disabled || action.blocked} onClick={() => onVehicle?.(v)}>{v.plate} — {v.brand} {v.model}</button></li>) : customers.map((c) => <li key={c.customerId}><button type="button" disabled={disabled || action.blocked} onClick={() => onCustomer?.(c)}>{c.firstName} {c.lastName}</button></li>)}</ul>
-    {cursor !== null && <button type="button" disabled={disabled || action.blocked} onClick={() => { search(true); }}>Más resultados</button>}
+    <ul>{vehicle ? vehicles.map((v) => <li key={v.vehicleId}><button type="button" disabled={unavailable} onClick={() => onVehicle?.(v)}>{v.plate} — {v.brand} {v.model}</button></li>) : customers.map((c) => <li key={c.customerId}><button type="button" disabled={unavailable} onClick={() => onCustomer?.(c)}>{c.firstName} {c.lastName}</button></li>)}</ul>
+    {cursor !== null && <button type="button" disabled={unavailable} onClick={() => { search(true); }}>Más resultados</button>}
   </div>;
 }
