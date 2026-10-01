@@ -217,24 +217,35 @@ export function AuthGateConnected() {
 
 export interface AuthProviderProps {
   readonly env: PublicEnv;
+  /**
+   * Contenido autenticado que decide la aplicación (shell + rutas). Sin `children` se renderiza el
+   * `AuthGate`, que es el comportamiento histórico de este proveedor.
+   */
+  readonly children?: ReactNode;
 }
 
 /**
  * Composición real: Clerk + contexto. Si falta configuración pública esencial no se monta
  * Clerk y no se hace ninguna petición (AC-A03).
  */
-export function AuthProvider({ env }: AuthProviderProps) {
+export function AuthProvider({ env, children }: AuthProviderProps) {
   if (env.clerkPublishableKey === null || env.apiOrigin === null) {
     return <ConfigIssuesPanel issues="missing_auth_config" />;
   }
   return (
     <ClerkAuthSessionProvider publishableKey={env.clerkPublishableKey}>
-      <ClerkAuthContext apiOrigin={env.apiOrigin} />
+      <ClerkAuthContext apiOrigin={env.apiOrigin}>{children}</ClerkAuthContext>
     </ClerkAuthSessionProvider>
   );
 }
 
-function ClerkAuthContext({ apiOrigin }: { readonly apiOrigin: string }) {
+function ClerkAuthContext({
+  apiOrigin,
+  children,
+}: {
+  readonly apiOrigin: string;
+  readonly children?: ReactNode;
+}) {
   const port = useAuthSessionPort();
   const apiClient = useMemo(
     () => createApiClient({ apiOrigin, getToken: (options) => port.getToken(options) }),
@@ -242,7 +253,7 @@ function ClerkAuthContext({ apiOrigin }: { readonly apiOrigin: string }) {
   );
   return (
     <AuthContextProvider port={port} apiClient={apiClient}>
-      <AuthGateConnected />
+      {children ?? <AuthGateConnected />}
     </AuthContextProvider>
   );
 }

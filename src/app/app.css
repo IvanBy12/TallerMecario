@@ -1,7 +1,53 @@
+/*
+ * Hoja de estilos única (D-14: CSS plano, un archivo, importado desde `src/main.tsx`).
+ *
+ * Los colores NO son una paleta inventada: son colores del sistema (`Canvas`, `CanvasText`,
+ * `AccentColor`, `ButtonFace`, `Mark`…) y derivados calculados con `color-mix` sobre ellos, que
+ * siguen el tema claro/oscuro del sistema operativo. Los tokens visuales definitivos
+ * (FE-DOC-16) siguen pendientes de su propia tarea; aquí sólo se fijan nombres estables.
+ */
+
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
   line-height: 1.5;
+
+  /* Superficies y bordes */
+  --tm-surface: Canvas;
+  --tm-surface-raised: color-mix(in srgb, CanvasText 3%, Canvas);
+  --tm-surface-muted: color-mix(in srgb, CanvasText 6%, Canvas);
+  --tm-surface-hover: color-mix(in srgb, CanvasText 9%, Canvas);
+  --tm-border: color-mix(in srgb, CanvasText 16%, Canvas);
+  --tm-border-strong: color-mix(in srgb, CanvasText 32%, Canvas);
+
+  /* Texto */
+  --tm-text: CanvasText;
+  --tm-text-muted: color-mix(in srgb, CanvasText 66%, Canvas);
+
+  /* Acento y aviso */
+  --tm-accent: AccentColor;
+  --tm-accent-text: AccentColorText;
+  --tm-accent-soft: color-mix(in srgb, AccentColor 14%, Canvas);
+  --tm-warning-soft: color-mix(in srgb, Mark 24%, Canvas);
+  --tm-warning-border: color-mix(in srgb, Mark 60%, CanvasText);
+
+  /* Formas y espacio */
+  --tm-radius-sm: 6px;
+  --tm-radius: 10px;
+  --tm-radius-lg: 14px;
+  --tm-space-1: 0.25rem;
+  --tm-space-2: 0.5rem;
+  --tm-space-3: 0.75rem;
+  --tm-space-4: 1rem;
+  --tm-space-5: 1.5rem;
+  --tm-space-6: 2rem;
+
+  /* Estructura */
+  --tm-header-height: 3.5rem;
+  --tm-sidebar-width: 16rem;
+  --tm-content-width: 68rem;
+  --tm-shadow: 0 1px 2px color-mix(in srgb, CanvasText 10%, transparent);
+  --tm-shadow-strong: 0 8px 24px color-mix(in srgb, CanvasText 18%, transparent);
 }
 
 *,
@@ -16,6 +62,13 @@ body {
   color: CanvasText;
 }
 
+:focus-visible {
+  outline: 2px solid var(--tm-accent);
+  outline-offset: 2px;
+}
+
+/* --- Pantalla de arranque (configuración pública inválida) ------------------------------- */
+
 .app {
   max-width: 40rem;
   margin: 0 auto;
@@ -28,4 +81,465 @@ dt {
 
 dd {
   margin: 0 0 0.75rem;
+}
+
+/* --- Botones genéricos -------------------------------------------------------------------- */
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--tm-space-2);
+  padding: var(--tm-space-2) var(--tm-space-4);
+  border: 1px solid var(--tm-border-strong);
+  border-radius: var(--tm-radius-sm);
+  background: ButtonFace;
+  color: ButtonText;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ui-button:hover {
+  background: color-mix(in srgb, CanvasText 8%, ButtonFace);
+}
+
+.ui-button--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--tm-text);
+}
+
+.ui-button--ghost:hover {
+  border-color: var(--tm-border);
+  background: var(--tm-surface-hover);
+}
+
+/* --- Shell autenticado -------------------------------------------------------------------- */
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+  flex-direction: column;
+  background: var(--tm-surface);
+  color: var(--tm-text);
+}
+
+.shell__skip-link {
+  position: absolute;
+  top: var(--tm-space-2);
+  left: var(--tm-space-2);
+  z-index: 5;
+  padding: var(--tm-space-2) var(--tm-space-3);
+  border-radius: var(--tm-radius-sm);
+  background: var(--tm-accent);
+  color: var(--tm-accent-text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.shell__skip-link:focus-visible {
+  transform: none;
+}
+
+.shell__header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: var(--tm-space-3);
+  min-height: var(--tm-header-height);
+  padding: var(--tm-space-2) var(--tm-space-4);
+  border-bottom: 1px solid var(--tm-border);
+  background: var(--tm-surface);
+}
+
+.shell__nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--tm-space-2);
+  padding: var(--tm-space-2) var(--tm-space-3);
+  border: 1px solid var(--tm-border);
+  border-radius: var(--tm-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.shell__nav-toggle:hover {
+  background: var(--tm-surface-hover);
+}
+
+.shell__nav-toggle-icon {
+  position: relative;
+  width: 1.05rem;
+  height: 0.72rem;
+  border-top: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.shell__nav-toggle-icon::after {
+  content: '';
+  position: absolute;
+  top: calc(50% - 1px);
+  right: 0;
+  left: 0;
+  border-top: 2px solid currentColor;
+}
+
+.shell__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--tm-space-3);
+  color: inherit;
+  text-decoration: none;
+}
+
+.shell__brand-mark {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--tm-radius-sm);
+  background: var(--tm-accent);
+  color: var(--tm-accent-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  place-items: center;
+}
+
+.shell__brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.shell__brand-name {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.shell__brand-tagline {
+  color: var(--tm-text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.shell__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--tm-space-2);
+  margin-left: auto;
+}
+
+.shell__body {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+}
+
+.shell__sidebar {
+  flex: 0 0 var(--tm-sidebar-width);
+  width: var(--tm-sidebar-width);
+  padding: var(--tm-space-4) var(--tm-space-3);
+  border-right: 1px solid var(--tm-border);
+  background: var(--tm-surface-muted);
+  overflow-y: auto;
+}
+
+.shell__main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--tm-space-5) var(--tm-space-4) var(--tm-space-6);
+}
+
+.shell__content {
+  display: flex;
+  width: 100%;
+  max-width: var(--tm-content-width);
+  margin: 0 auto;
+  flex-direction: column;
+  gap: var(--tm-space-4);
+}
+
+.shell__scrim {
+  display: none;
+}
+
+/* Móvil y tablet: barra lateral fuera del flujo, oculta hasta abrirla. `visibility` la deja
+   fuera del árbol de accesibilidad y del orden de tabulación mientras está cerrada. */
+@media (max-width: 1023px) {
+  .shell__sidebar {
+    position: fixed;
+    top: var(--tm-header-height);
+    bottom: 0;
+    left: 0;
+    z-index: 4;
+    visibility: hidden;
+    transform: translateX(-100%);
+    transition:
+      transform 160ms ease,
+      visibility 160ms ease;
+  }
+
+  .shell--nav-open .shell__sidebar {
+    visibility: visible;
+    transform: none;
+    box-shadow: var(--tm-shadow-strong);
+  }
+
+  .shell__scrim {
+    position: fixed;
+    inset: var(--tm-header-height) 0 0 0;
+    z-index: 2;
+    display: block;
+    padding: 0;
+    border: 0;
+    background: color-mix(in srgb, CanvasText 35%, transparent);
+  }
+}
+
+/* Escritorio: barra lateral fija junto al contenido y sin botón de menú. */
+@media (min-width: 1024px) {
+  .shell__nav-toggle {
+    display: none;
+  }
+
+  .shell__sidebar {
+    position: sticky;
+    top: var(--tm-header-height);
+    align-self: flex-start;
+    height: calc(100vh - var(--tm-header-height));
+    height: calc(100dvh - var(--tm-header-height));
+  }
+
+  .shell__main {
+    padding: var(--tm-space-6) var(--tm-space-5);
+  }
+}
+
+/* --- Navegación --------------------------------------------------------------------------- */
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tm-space-5);
+}
+
+.nav__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tm-space-2);
+}
+
+.nav__section-title {
+  margin: 0;
+  padding: 0 var(--tm-space-3);
+  color: var(--tm-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nav__list {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+}
+
+.nav__link {
+  display: flex;
+  align-items: center;
+  gap: var(--tm-space-3);
+  padding: var(--tm-space-2) var(--tm-space-3);
+  border-radius: var(--tm-radius-sm);
+  color: var(--tm-text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.nav__link:hover {
+  background: var(--tm-surface-hover);
+}
+
+.nav__link--active {
+  background: var(--tm-accent-soft);
+  box-shadow: inset 2px 0 0 var(--tm-accent);
+  font-weight: 650;
+}
+
+.nav-icon {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  color: var(--tm-text-muted);
+}
+
+.nav__link--active .nav-icon {
+  color: var(--tm-accent);
+}
+
+.nav__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --- Encabezado de página ----------------------------------------------------------------- */
+
+.ui-page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--tm-space-3);
+}
+
+.ui-page-header__icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--tm-radius);
+  background: var(--tm-accent-soft);
+  place-items: center;
+}
+
+.ui-page-header__icon .nav-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--tm-accent);
+}
+
+.ui-page-header__text {
+  min-width: 0;
+}
+
+.ui-page-header__title {
+  margin: 0;
+  font-size: 1.4rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.ui-page-header__description {
+  max-width: 60rem;
+  margin: var(--tm-space-1) 0 0;
+  color: var(--tm-text-muted);
+  font-size: 0.92rem;
+}
+
+.ui-page-header__actions {
+  margin-left: auto;
+}
+
+/* --- Estado vacío ------------------------------------------------------------------------- */
+
+.ui-empty-state {
+  display: flex;
+  padding: var(--tm-space-5);
+  border: 1px dashed var(--tm-border-strong);
+  border-radius: var(--tm-radius-lg);
+  background: var(--tm-surface-raised);
+  flex-direction: column;
+  gap: var(--tm-space-3);
+}
+
+.ui-empty-state__title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ui-empty-state__description {
+  max-width: 60rem;
+  margin: 0;
+  color: var(--tm-text-muted);
+  font-size: 0.9rem;
+}
+
+.ui-empty-state__items-label {
+  margin: 0;
+  color: var(--tm-text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ui-empty-state__items {
+  display: flex;
+  margin: 0;
+  padding-left: 1.1rem;
+  flex-direction: column;
+  gap: var(--tm-space-1);
+  font-size: 0.9rem;
+}
+
+.ui-empty-state__action {
+  margin-top: var(--tm-space-1);
+}
+
+/* --- Aviso persistente -------------------------------------------------------------------- */
+
+.ui-status-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--tm-space-3);
+  padding: var(--tm-space-3) var(--tm-space-4);
+  border: 1px solid var(--tm-border-strong);
+  border-radius: var(--tm-radius);
+  background: var(--tm-surface-muted);
+}
+
+.ui-status-banner--warning {
+  border-color: var(--tm-warning-border);
+  background: var(--tm-warning-soft);
+}
+
+.ui-status-banner__glyph {
+  display: grid;
+  flex: 0 0 auto;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: CanvasText;
+  color: Canvas;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+  place-items: center;
+}
+
+.ui-status-banner__text {
+  min-width: 0;
+}
+
+.ui-status-banner__title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.ui-status-banner__body {
+  margin-top: var(--tm-space-1);
+  font-size: 0.88rem;
+}
+
+.ui-status-banner__body p {
+  margin: 0;
+}
+
+.ui-status-banner__actions {
+  margin-left: auto;
 }
