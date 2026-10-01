@@ -6,6 +6,8 @@ import { ClerkSignInPanel } from './clerk-session';
 import type { AuthState, ContextNotice, RecoverableReason } from './workshop-context';
 
 export interface AuthGateActions {
+  readonly onSelectTenant?: (tenantId: string) => void;
+  readonly onChangeWorkshop?: () => void;
   readonly onSignOut: () => void;
   /** `session_expired` → `signed_out` (la sesión ya terminó según Clerk). */
   readonly onSignInAgain: () => void;
@@ -191,7 +193,8 @@ export function AuthGate({ state, actions }: AuthGateProps) {
           {state.notice === null ? null : (
             <Notice notice={state.notice} onDismiss={actions.onDismissNotice} />
           )}
-          <p role="alert">Tu cuenta no tiene acceso activo a un taller.</p>
+          <p role="alert">{state.reason === 'permission_denied' ? 'No tienes permiso para consultar el contexto del taller.' : 'Tu cuenta no tiene acceso activo a un taller.'}</p>
+          <RequestId value={state.requestId ?? null} />
           <button type="button" onClick={actions.onRetry} disabled={!retryEnabled}>
             Reintentar
           </button>
@@ -207,8 +210,11 @@ export function AuthGate({ state, actions }: AuthGateProps) {
             <Notice notice={state.notice} onDismiss={actions.onDismissNotice} />
           )}
           <p role="status">
-            Tu cuenta tiene acceso a varios talleres. La selección de taller aún no está disponible.
+            Elige el taller con el que deseas trabajar.
           </p>
+          <ul>{state.memberships.map((member) => (
+            <li key={member.tenantId}><button type="button" onClick={() => actions.onSelectTenant?.(member.tenantId)}>{member.displayName ?? member.tenantId}</button></li>
+          ))}</ul>
           {signOutButton}
         </div>
       );
@@ -234,7 +240,7 @@ export function AuthGate({ state, actions }: AuthGateProps) {
           )}
           <dl>
             <dt>Taller activo</dt>
-            <dd>{state.tenantId}</dd>
+            <dd>{state.context?.workshop.displayName ?? state.tenantId}</dd>
           </dl>
           {signOutButton}
         </div>

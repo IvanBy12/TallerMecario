@@ -14,6 +14,7 @@ import { classifyFailure } from '@/shared/api/api-failure';
 import { createApiClient, type ApiClient } from '@/shared/api/http-client';
 import type { PublicEnv } from '@/shared/config/public-env';
 
+import { createMeContextSource } from './me-context-source';
 import { AuthGate, ConfigIssuesPanel, type AuthGateActions } from './auth-gate';
 import { ClerkAuthSessionProvider, useAuthSessionPort } from './clerk-session';
 import type { AuthSessionPort, SessionSnapshot } from './session-port';
@@ -29,7 +30,7 @@ import {
   type WorkshopContextSource,
 } from './workshop-context';
 
-const INITIAL_STORE: AuthStore = { generation: 0, auth: { kind: 'loading_identity' } };
+const INITIAL_STORE: AuthStore = { generation: 0, attempt: 0, auth: { kind: 'loading_identity' } };
 
 export interface AuthContextValue {
   readonly state: AuthState;
@@ -67,16 +68,16 @@ function buildScope(
   return {
     generation: current.generation,
     identity: identityOf(auth),
-    tenantId: auth.kind === 'ready' ? auth.tenantId : null,
+    tenantId: auth.kind === 'ready' || auth.kind === 'loading_context' ? auth.tenantId ?? null : null,
     signal: current.controller.signal,
   };
 }
 
 export interface AuthContextProviderProps {
   readonly port: AuthSessionPort;
-  /** Reservado para G5; hoy no se consume porque no hay operaciones de contexto cableadas. */
+  /** Cliente del adaptador canónico de contexto. */
   readonly apiClient: ApiClient;
-  /** Sin `contextSource` (G5 pendiente) el reducer se crea con `hasContextSource: false`. */
+  /** Puerto inyectable para pruebas; la composición real usa createMeContextSource. */
   readonly contextSource?: WorkshopContextSource;
   readonly children: ReactNode;
 }
@@ -87,6 +88,13 @@ export function AuthContextProvider(props: AuthContextProviderProps) {
   const reducer = useMemo(() => createAuthReducer({ hasContextSource }), [hasContextSource]);
   const [store, dispatch] = useReducer(reducer, INITIAL_STORE);
   const scopeRef = useRef<{ generation: number; controller: AbortController } | null>(null);
+  // Secuencia monotónica de intentos de carga (P2): identifica cada intento dentro de la misma
+  // generación. Vive tanto como el estado del reducer, así que nunca se reutiliza un id.
+  const attemptRef = useRef(0);
+  const nextAttempt = useCallback((): number => {
+    attemptRef.current += 1;
+    return attemptRef.current;
+  }, []);
   // Snapshot vigente de Clerk: la fuente actual prevalece sobre el estado capturado al cerrar sesión.
   const portRef = useRef(port);
 
@@ -125,19 +133,37 @@ export function AuthContextProvider(props: AuthContextProviderProps) {
       if (scope === null || contextSource === undefined) {
         return;
       }
-      const result = await withSingleFreshRetry(scope, (attempt) => contextSource.load(attempt));
+      const attempt = nextAttempt();
+      // Invalida lógicamente cualquier intento anterior de esta generación antes de esperar nada:
+      // una respuesta tardía de un intento anterior ya no podrá hacer commit.
+      dispatch({ type: 'context_load_started', generation: scope.generation, attempt });
+      const result = await withSingleFreshRetry(scope, (loadAttempt) =>
+        contextSource.load(loadAttempt),
+      );
       if (result.ok) {
-        dispatch({ type: 'context_loaded', generation: scope.generation, snapshot: result.data });
+        dispatch({
+          type: 'context_loaded',
+          generation: scope.generation,
+          attempt,
+          snapshot: result.data,
+        });
+        return;
+      }
+      if (['tenant_access_denied', 'active_membership_required', 'tenant_selection_required'].includes(result.failure.kind)) {
+        if (!scope.signal.aborted) {
+          dispatch({ type: 'access_lost', generation: scope.generation, attempt });
+        }
         return;
       }
       dispatch({
         type: 'context_failed',
         generation: scope.generation,
+        attempt,
         failure: result.failure,
         at: Date.now(),
       });
     },
-    [contextSource],
+    [contextSource, nextAttempt],
   );
 
   const auth = store.auth;
@@ -151,6 +177,8 @@ export function AuthContextProvider(props: AuthContextProviderProps) {
 
   const actions = useMemo<AuthGateActions>(
     () => ({
+      onSelectTenant: (tenantId) => { dispatch({ type: 'tenant_selected', tenantId }); },
+      onChangeWorkshop: () => { dispatch({ type: 'change_workshop' }); },
       onSignOut: () => {
         const identity = identityOf(store.auth);
         if (identity === null) {
@@ -251,8 +279,9 @@ function ClerkAuthContext({
     () => createApiClient({ apiOrigin, getToken: (options) => port.getToken(options) }),
     [apiOrigin, port],
   );
+  const contextSource = useMemo(() => createMeContextSource(apiClient), [apiClient]);
   return (
-    <AuthContextProvider port={port} apiClient={apiClient}>
+    <AuthContextProvider port={port} apiClient={apiClient} contextSource={contextSource}>
       {children ?? <AuthGateConnected />}
     </AuthContextProvider>
   );

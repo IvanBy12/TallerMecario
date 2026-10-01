@@ -1,8 +1,7 @@
 /**
  * Clasificación de fallas del transporte (tabla G2 de la especificación de autenticación, §3.2).
  * Se clasifica por status + `error.code`, nunca por el texto del mensaje.
- * Los códigos del selector de taller (G5) NO se clasifican aquí hasta que TA-01 congele el contrato:
- * antes de TA-01 un 400/403/409 con esos códigos se clasifica solo por status.
+ * Códigos del selector: contrato backend me-and-workshop-context.md (2026-10-01).
  */
 
 export type ApiFailureKind =
@@ -12,6 +11,9 @@ export type ApiFailureKind =
   | 'token_error'
   | 'unauthenticated'
   // denegaciones por operación
+  | 'tenant_access_denied'
+  | 'active_membership_required'
+  | 'tenant_selection_required'
   | 'permission_denied'
   | 'action_forbidden'
   | 'forbidden_unknown'
@@ -127,7 +129,11 @@ function httpFailureKind(status: number, code: string | null): Exclude<ApiFailur
   if (status === 401) {
     return 'unauthenticated';
   }
+  if (status === 400 && code === 'TENANT_SELECTION_INVALID') return 'client_bug';
+  if (status === 409 && code === 'TENANT_SELECTION_REQUIRED') return 'tenant_selection_required';
   if (status === 403) {
+    if (code === 'TENANT_ACCESS_DENIED') return 'tenant_access_denied';
+    if (code === 'ACTIVE_MEMBERSHIP_REQUIRED') return 'active_membership_required';
     if (code === PERMISSION_DENIED_CODE) {
       return 'permission_denied';
     }

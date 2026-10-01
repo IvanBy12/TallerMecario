@@ -14,6 +14,8 @@ import { NavIcon } from './nav-icon';
 
 export interface AppShellProps {
   readonly status: ShellContextStatus;
+  readonly workshopName?: string;
+  readonly onChangeWorkshop?: () => void;
   readonly onSignOut: () => void;
   /**
    * Permisos efectivos para filtrar la navegación. Por defecto `null` (G5 pendiente): no se
@@ -26,7 +28,7 @@ export interface AppShellProps {
  * Layout principal autenticado: cabecera, barra lateral en escritorio, menú desplegable en móvil
  * y área de contenido. Sólo se monta desde `AuthenticatedRoot`, con un estado ya validado.
  */
-export function AppShell({ status, onSignOut, grantedPermissions = null }: AppShellProps) {
+export function AppShell({ status, onSignOut, grantedPermissions = null, workshopName, onChangeWorkshop }: AppShellProps) {
   const [isNavigationOpen, setIsNavigationOpen] = useState(false);
   const navigationId = useId();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -88,11 +90,12 @@ export function AppShell({ status, onSignOut, grantedPermissions = null }: AppSh
           </span>
           <span className="shell__brand-text">
             <span className="shell__brand-name">TallerMecario</span>
-            <span className="shell__brand-tagline">Operación de taller</span>
+            <span className="shell__brand-tagline">{workshopName ?? 'Operación de taller'}</span>
           </span>
         </Link>
 
         <div className="shell__header-actions">
+          {onChangeWorkshop === undefined ? null : <button type="button" className="ui-button ui-button--ghost" onClick={onChangeWorkshop}>Cambiar taller</button>}
           <button type="button" className="ui-button ui-button--ghost" onClick={onSignOut}>
             Cerrar sesión
           </button>

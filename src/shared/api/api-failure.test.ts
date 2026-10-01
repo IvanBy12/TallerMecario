@@ -107,11 +107,11 @@ describe('classifyFailure', () => {
     }
   });
 
-  it('antes de TA-01 los códigos del selector se clasifican solo por status', () => {
-    expect(http(403, 'ACTIVE_MEMBERSHIP_REQUIRED').kind).toBe('forbidden_unknown');
-    expect(http(403, 'TENANT_ACCESS_DENIED').kind).toBe('forbidden_unknown');
-    expect(http(409, 'TENANT_SELECTION_REQUIRED').kind).toBe('unexpected_status');
-    expect(http(400, 'TENANT_SELECTION_INVALID').kind).toBe('bad_request');
+  it('clasifica los códigos del selector por status y contrato aprobado', () => {
+    expect(http(403, 'ACTIVE_MEMBERSHIP_REQUIRED').kind).toBe('active_membership_required');
+    expect(http(403, 'TENANT_ACCESS_DENIED').kind).toBe('tenant_access_denied');
+    expect(http(409, 'TENANT_SELECTION_REQUIRED').kind).toBe('tenant_selection_required');
+    expect(http(400, 'TENANT_SELECTION_INVALID').kind).toBe('client_bug');
   });
 
   it('conserva status, code y requestId, y retryAfterSeconds en rate_limited', () => {

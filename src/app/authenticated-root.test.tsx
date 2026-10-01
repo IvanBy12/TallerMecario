@@ -24,7 +24,8 @@ describe('AuthenticatedRoot', () => {
   it('con sesión iniciada y contexto de taller pendiente monta el shell con su aviso', async () => {
     renderWithAuth(<AuthenticatedRoot />, { snapshot: signedInSnapshot() });
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Panel' })).toBeDefined();
+    expect(await screen.findByRole('alert')).toBeDefined();
+    expect(screen.queryByRole('link', { name: 'Clientes' })).toBeNull();
     expect(screen.getByRole('navigation', { name: 'Navegación principal' })).toBeDefined();
     expect(screen.getByText('Contexto de taller pendiente')).toBeDefined();
   });

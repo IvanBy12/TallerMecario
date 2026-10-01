@@ -2,6 +2,8 @@ import type { ApiFailure, ApiFailureKind } from '@/shared/api/api-failure';
 import type { ApiResult, TokenPolicy } from '@/shared/api/http-client';
 import type { PublicEnvIssue } from '@/shared/config/public-env';
 
+import type { WorkshopContext } from './me-contract';
+
 export type IdentityKey = string; // userId:sessionId de Clerk, solo en memoria
 
 export type ContextNotice = 'workshop_access_revoked' | 'workshop_changed';
@@ -22,6 +24,7 @@ export interface DegradedInfo {
 }
 
 export interface MembershipRef {
+  readonly displayName?: string;
   readonly tenantId: string;
   readonly membershipId: string;
 }
@@ -33,10 +36,11 @@ export type AuthState =
   | { readonly kind: 'signed_in_context_pending'; readonly identity: IdentityKey } // sin contextSource (G5 ausente)
   | {
       readonly kind: 'loading_context';
+      readonly tenantId?: string;
       readonly identity: IdentityKey;
       readonly notice: ContextNotice | null;
     } // G5
-  | { readonly kind: 'no_access'; readonly identity: IdentityKey; readonly notice: ContextNotice | null } // G5
+  | { readonly kind: 'no_access'; readonly reason?: 'permission_denied'; readonly requestId?: string | null; readonly identity: IdentityKey; readonly notice: ContextNotice | null } // G5
   | {
       readonly kind: 'workshop_selection_required';
       readonly identity: IdentityKey;
@@ -45,6 +49,7 @@ export type AuthState =
     } // G5
   | {
       readonly kind: 'ready';
+      readonly context?: WorkshopContext;
       readonly identity: IdentityKey;
       readonly tenantId: string;
       readonly membershipId: string;
@@ -71,16 +76,28 @@ export type ConfigErrorState = Extract<AuthState, { kind: 'config_error' }>;
 export type ReadyState = Extract<AuthState, { kind: 'ready' }>;
 type NoticeBearingState = Extract<AuthState, { notice: ContextNotice | null }>;
 
-/** Estado del reducer. `generation` es un contador, no contexto de taller. */
+/**
+ * Estado del reducer. `generation` y `attempt` son contadores, no contexto de taller.
+ *
+ * `generation` protege el cambio de sesión/taller: una acción de una generación anterior se
+ * descarta entera.
+ *
+ * `attempt` es la identidad del **intento de carga** vigente y es independiente de `generation`:
+ * protege las revalidaciones concurrentes dentro de la misma generación. Sin él, dos cargas de la
+ * misma generación comparten identificador y una respuesta antigua puede llegar después y
+ * sobrescribir un contexto más reciente (incluidos permisos ya revocados). `0` significa que
+ * todavía no se ha registrado ningún intento.
+ */
 export interface AuthStore {
   readonly generation: number;
+  readonly attempt: number;
   readonly auth: AuthState;
 }
 
 /** Entrada de dominio INTERNA del reducer (no es un DTO ni copia nombres del backend). */
 export type WorkshopContextSnapshot =
   | { readonly kind: 'none' }
-  | { readonly kind: 'single'; readonly membership: MembershipRef }
+  | { readonly kind: 'single'; readonly membership: MembershipRef; readonly context?: WorkshopContext }
   | { readonly kind: 'multiple'; readonly memberships: readonly MembershipRef[] };
 
 /** Una invocación de la fuente. `scope.signal` cubre la espera de getToken() Y el fetch. */
@@ -117,17 +134,29 @@ export type AuthAction =
       readonly at: number;
     }
   | {
+      /**
+       * Anuncia el inicio de un intento de carga. `attempt` es estrictamente mayor que el vigente e
+       * invalida lógicamente cualquier intento anterior de la misma generación.
+       */
+      readonly type: 'context_load_started';
+      readonly generation: number;
+      readonly attempt: number;
+    }
+  | {
       readonly type: 'context_loaded';
       readonly generation: number;
+      readonly attempt: number;
       readonly snapshot: WorkshopContextSnapshot;
     }
   | {
       readonly type: 'context_failed';
       readonly generation: number;
+      readonly attempt: number;
       readonly failure: ApiFailure;
       readonly at: number;
     }
-  | { readonly type: 'access_lost' }
+  | { readonly type: 'access_lost'; readonly generation?: number; readonly attempt?: number }
+  | { readonly type: 'change_workshop' }
   | { readonly type: 'tenant_selected'; readonly tenantId: string }
   | { readonly type: 'retry_requested'; readonly at: number }
   | { readonly type: 'notice_dismissed' };
@@ -172,11 +201,11 @@ export function retryAllowed(auth: AuthState, at: number): boolean {
 }
 
 function cut(store: AuthStore, auth: AuthState): AuthStore {
-  return { generation: store.generation + 1, auth };
+  return { ...store, generation: store.generation + 1, auth };
 }
 
 function keepGeneration(store: AuthStore, auth: AuthState): AuthStore {
-  return { generation: store.generation, auth };
+  return { ...store, auth };
 }
 
 function pendingState(
@@ -196,10 +225,12 @@ function readyWith(
     readonly membershipId?: string;
     readonly notice?: ContextNotice | null;
     readonly degraded?: DegradedInfo | null;
+    readonly context?: WorkshopContext;
   },
 ): AuthState {
   return {
     kind: 'ready',
+    context: patch.context ?? auth.context,
     identity: auth.identity,
     tenantId: patch.tenantId ?? auth.tenantId,
     membershipId: patch.membershipId ?? auth.membershipId,
@@ -270,6 +301,7 @@ function applyContextLoaded(store: AuthStore, snapshot: WorkshopContextSnapshot)
       case 'single':
         return keepGeneration(store, {
           kind: 'ready',
+          context: snapshot.context,
           identity,
           tenantId: snapshot.membership.tenantId,
           membershipId: snapshot.membership.membershipId,
@@ -293,12 +325,13 @@ function applyContextLoaded(store: AuthStore, snapshot: WorkshopContextSnapshot)
       case 'single': {
         const { membership } = snapshot;
         if (membership.tenantId === activeTenantId && membership.membershipId === activeMembershipId) {
-          return keepGeneration(store, readyWith(auth, { degraded: null })); // T7b
+          return keepGeneration(store, readyWith(auth, { degraded: null, context: snapshot.context })); // T7b
         }
         if (membership.tenantId !== activeTenantId) {
           return cut(
             store,
             readyWith(auth, {
+              context: snapshot.context,
               tenantId: membership.tenantId,
               membershipId: membership.membershipId,
               notice: 'workshop_changed',
@@ -309,6 +342,7 @@ function applyContextLoaded(store: AuthStore, snapshot: WorkshopContextSnapshot)
         return cut(
           store,
           readyWith(auth, {
+            context: snapshot.context,
             membershipId: membership.membershipId,
             notice: null,
             degraded: null,
@@ -353,6 +387,9 @@ function applyContextFailed(store: AuthStore, failure: ApiFailure, at: number): 
   if (identity === null) {
     return store;
   }
+  if (failure.kind === 'permission_denied') {
+    return cut(store, { kind: 'no_access', identity, notice: null, reason: 'permission_denied', requestId: failure.requestId });
+  }
   if (failure.kind === 'no_session') {
     return cut(store, { kind: 'session_expired' }); // T10
   }
@@ -394,12 +431,10 @@ function applyTenantSelected(store: AuthStore, tenantId: string): AuthStore {
     return store;
   }
   return cut(store, {
-    kind: 'ready',
+    kind: 'loading_context',
     identity: auth.identity,
     tenantId: selected.tenantId,
-    membershipId: selected.membershipId,
     notice: null,
-    degraded: null,
   }); // T16
 }
 
@@ -419,7 +454,10 @@ function applyRetryRequested(store: AuthStore, at: number, hasContextSource: boo
   return cut(store, pendingState(hasContextSource, auth.identity, null)); // T17
 }
 
-function reduce(store: AuthStore, action: AuthAction, hasContextSource: boolean): AuthStore {
+/** Acciones que aplica `reduce`; el inicio de un intento se resuelve antes, en `createAuthReducer`. */
+type ApplicableAction = Exclude<AuthAction, { readonly type: 'context_load_started' }>;
+
+function reduce(store: AuthStore, action: ApplicableAction, hasContextSource: boolean): AuthStore {
   const { auth } = store;
 
   switch (action.type) {
@@ -468,6 +506,10 @@ function reduce(store: AuthStore, action: AuthAction, hasContextSource: boolean)
       }
       return cut(store, pendingState(hasContextSource, identity, 'workshop_access_revoked')); // T14
     }
+    case 'change_workshop': {
+      const identity = identityOf(auth);
+      return identity === null ? store : cut(store, pendingState(hasContextSource, identity, null));
+    }
     case 'tenant_selected':
       return applyTenantSelected(store, action.tenantId); // T16
     case 'retry_requested':
@@ -481,15 +523,36 @@ function reduce(store: AuthStore, action: AuthAction, hasContextSource: boolean)
   }
 }
 
+/**
+ * Respuesta tardía: pertenece a un intento anterior al vigente dentro de la misma generación.
+ * `access_lost` sin `attempt` es el evento de fuente que ya existía y no se compara.
+ */
+function isLateResponse(store: AuthStore, action: ApplicableAction): boolean {
+  return 'attempt' in action && action.attempt !== undefined && action.attempt < store.attempt;
+}
+
 export function createAuthReducer(options: {
   readonly hasContextSource: boolean;
 }): AuthReducer {
   const hasContextSource = options.hasContextSource;
   return (store, action) => {
+    // Capa 1 — generation: descarta por completo lo que pertenece a una sesión/taller anteriores.
     if ('generation' in action && action.generation !== store.generation) {
       return store; // acción obsoleta: mismo objeto
     }
-    return reduce(store, action, hasContextSource);
+    // Capa 2 — attempt: dentro de la misma generación, solo el intento vigente puede hacer commit.
+    if (action.type === 'context_load_started') {
+      // Un intento nuevo (o repetido) nunca reabre uno anterior ya invalidado.
+      return action.attempt <= store.attempt ? store : { ...store, attempt: action.attempt };
+    }
+    if (isLateResponse(store, action)) {
+      return store; // se ignora en silencio: ni éxito, ni error, ni aviso
+    }
+    const next = reduce(store, action, hasContextSource);
+    if (next === store || !('attempt' in action) || action.attempt === undefined) {
+      return next;
+    }
+    return { ...next, attempt: action.attempt };
   };
 }
 

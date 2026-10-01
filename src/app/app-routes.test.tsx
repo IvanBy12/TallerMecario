@@ -1,4 +1,4 @@
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +18,7 @@ function renderRoutes(options: RenderRoutesOptions) {
   return renderWithAuth(
     <MemoryRouter initialEntries={[...options.initialEntries]}>
       <AppRoutes
+        grantedPermissions={new Set(NAVIGATION_ITEMS.flatMap((item) => item.requiredPermission === null ? [] : [item.requiredPermission]))}
         shellStatus={options.shellStatus ?? 'context_pending'}
         onSignOut={options.onSignOut ?? (() => undefined)}
       />
@@ -150,4 +151,11 @@ describe('rutas de la aplicación', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar sesión' }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
+});
+
+it('deniega rutas directas y enlaces cuando falta el permiso efectivo', () => {
+  render(<MemoryRouter initialEntries={['/clientes']}><AppRoutes shellStatus="context_ready" onSignOut={() => undefined} grantedPermissions={new Set(['vehicles.read'])} /></MemoryRouter>);
+  expect(screen.getByRole('alert').textContent).toContain('No tienes permiso');
+  expect(screen.queryByRole('link', { name: 'Clientes' })).toBeNull();
+  expect(screen.getByRole('link', { name: 'Vehículos' })).toBeDefined();
 });
