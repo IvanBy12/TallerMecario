@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ApiFailure, ApiFailureKind } from '@/shared/api/api-failure';
 
+import type { WorkshopContext } from './me-contract';
 import {
   createAuthReducer,
   withSingleFreshRetry,
@@ -31,6 +32,7 @@ const withoutSource = createAuthReducer({ hasContextSource: false });
 
 const READY: AuthStore = {
   generation: 3,
+  attempt: 0,
   auth: {
     kind: 'ready',
     identity: 'id-A',
@@ -43,11 +45,13 @@ const READY: AuthStore = {
 
 const LOADING_CONTEXT: AuthStore = {
   generation: 3,
+  attempt: 0,
   auth: { kind: 'loading_context', identity: 'id-A', notice: null },
 };
 
 const SELECTION: AuthStore = {
   generation: 3,
+  attempt: 0,
   auth: {
     kind: 'workshop_selection_required',
     identity: 'id-A',
@@ -64,7 +68,7 @@ function serialized(store: AuthStore): string {
 }
 
 function contextLoaded(generation: number, snapshot: WorkshopContextSnapshot): AuthAction {
-  return { type: 'context_loaded', generation, snapshot };
+  return { type: 'context_loaded', generation, attempt: 1, snapshot };
 }
 
 describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
@@ -97,6 +101,7 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
           withSource(store, {
             type: 'context_failed',
             generation: 3,
+            attempt: 1,
             failure: failure('no_session'),
             at: 0,
           }),
@@ -107,6 +112,7 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
           withSource(store, {
             type: 'context_failed',
             generation: 3,
+            attempt: 1,
             failure: failure('unauthenticated', 'req-401'),
             at: 0,
           }),
@@ -117,6 +123,7 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
           withSource(store, {
             type: 'context_failed',
             generation: 3,
+            attempt: 1,
             failure: failure('contract_violation'),
             at: 0,
           }),
@@ -136,6 +143,7 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
           withSource(withSource(store, { type: 'access_lost' }), {
             type: 'context_failed',
             generation: 4,
+            attempt: 1,
             failure: failure('token_offline', 'req-off'),
             at: 0,
           }),
@@ -185,8 +193,8 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
     const fromSelection: readonly AuthAction[] = [
       { type: 'session_changed', session: { status: 'signed_out' } },
       { type: 'sign_out_requested' },
-      { type: 'context_failed', generation: 3, failure: failure('unauthenticated', 'req-1'), at: 0 },
-      { type: 'context_failed', generation: 3, failure: failure('contract_violation'), at: 0 },
+      { type: 'context_failed', generation: 3, attempt: 1, failure: failure('unauthenticated', 'req-1'), at: 0 },
+      { type: 'context_failed', generation: 3, attempt: 1, failure: failure('contract_violation'), at: 0 },
       { type: 'access_lost' },
       { type: 'session_changed', session: { status: 'signed_in', identity: 'id-B' } },
     ];
@@ -206,6 +214,7 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
     const afterNoSession = withSource(READY, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: failure('no_session'),
       at: 0,
     });
@@ -225,12 +234,14 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
       withSource(READY, {
         type: 'context_failed',
         generation: 3,
+        attempt: 1,
         failure: failure('unauthenticated', 'req-1'),
         at: 0,
       }),
       withSource(READY, {
         type: 'context_failed',
         generation: 3,
+        attempt: 1,
         failure: failure('contract_violation'),
         at: 0,
       }),
@@ -239,6 +250,7 @@ describe('no retención de contexto y de identidad (prueba 1 de 4.7)', () => {
       withSource(withSource(READY, { type: 'access_lost' }), {
         type: 'context_failed',
         generation: 4,
+        attempt: 1,
         failure: failure('token_offline'),
         at: 0,
       }),
@@ -264,6 +276,7 @@ describe('retención solo degradada (prueba 2)', () => {
     const result = withSource(READY, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: failure('network', 'req-net'),
       at: 1000,
     });
@@ -283,6 +296,7 @@ describe('retención solo degradada (prueba 2)', () => {
     const result = withSource(LOADING_CONTEXT, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: failure('server_error', 'req-5'),
       at: 0,
     });
@@ -310,6 +324,7 @@ describe('retención solo degradada (prueba 2)', () => {
       const result = withSource(LOADING_CONTEXT, {
         type: 'context_failed',
         generation: 3,
+        attempt: 1,
         failure: apiFailure,
         at: 0,
       });
@@ -374,7 +389,7 @@ describe('generación obsoleta (prueba 4)', () => {
   it('las acciones con generación antigua devuelven el mismo objeto', () => {
     const stale: readonly AuthAction[] = [
       contextLoaded(2, { kind: 'none' }),
-      { type: 'context_failed', generation: 2, failure: failure('network'), at: 0 },
+      { type: 'context_failed', generation: 2, attempt: 1, failure: failure('network'), at: 0 },
       { type: 'sign_out_failed', generation: 2, identity: 'id-A', failure: failure('token_error'), at: 0 },
     ];
 
@@ -385,7 +400,7 @@ describe('generación obsoleta (prueba 4)', () => {
 });
 
 describe('fatales (prueba 5)', () => {
-  const fatalKinds: readonly NonRateLimitedKind[] = [
+  const contextFailureKinds: readonly NonRateLimitedKind[] = [
     'client_bug',
     'bad_request',
     'unexpected_status',
@@ -396,17 +411,28 @@ describe('fatales (prueba 5)', () => {
     'action_forbidden',
   ];
 
-  it('cada kind de T12 produce fatal_error con requestId y sin ids de taller', () => {
-    for (const kind of fatalKinds) {
+  it('T12 produce fatal_error y permission_denied produce no_access, con requestId y sin ids de taller', () => {
+    for (const kind of contextFailureKinds) {
       const result = withSource(LOADING_CONTEXT, {
         type: 'context_failed',
         generation: 3,
+        attempt: 1,
         failure: failure(kind, 'req-x'),
         at: 0,
       });
 
       expect(result.generation).toBe(4);
-      expect(result.auth.kind).toBe('fatal_error');
+      if (kind === 'permission_denied') {
+        expect(result.auth).toEqual({
+          kind: 'no_access',
+          identity: 'id-A',
+          notice: null,
+          reason: 'permission_denied',
+          requestId: 'req-x',
+        });
+      } else {
+        expect(result.auth.kind).toBe('fatal_error');
+      }
       if (result.auth.kind === 'fatal_error') {
         const expected = kind === 'client_bug' || kind === 'bad_request' ? 'client_bug' : 'contract_violation';
         expect(result.auth.reason).toBe(expected);
@@ -420,12 +446,14 @@ describe('fatales (prueba 5)', () => {
     const recoverable = withSource(LOADING_CONTEXT, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: failure('network'),
       at: 0,
     });
     const rejected = withSource(LOADING_CONTEXT, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: httpFailure('unauthenticated', 401, 'AUTHENTICATION_REQUIRED'),
       at: 0,
     });
@@ -439,6 +467,7 @@ describe('fatales (prueba 5)', () => {
       withSource(LOADING_CONTEXT, {
         type: 'context_failed',
         generation: 3,
+        attempt: 1,
         failure: failure('aborted'),
         at: 0,
       }),
@@ -466,7 +495,7 @@ describe('anti-bucle (prueba 6)', () => {
 
 describe('sin contextSource (prueba 7)', () => {
   it('T1, T17 y la salida de auth_rejected producen signed_in_context_pending', () => {
-    const t1 = withoutSource({ generation: 0, auth: { kind: 'loading_identity' } }, {
+    const t1 = withoutSource({ generation: 0, attempt: 0, auth: { kind: 'loading_identity' } }, {
       type: 'session_changed',
       session: { status: 'signed_in', identity: 'id-A' },
     });
@@ -474,13 +503,14 @@ describe('sin contextSource (prueba 7)', () => {
 
     const rejected: AuthStore = {
       generation: 2,
+      attempt: 0,
       auth: { kind: 'auth_rejected', identity: 'id-A', requestId: null },
     };
     const t17 = withoutSource(rejected, { type: 'retry_requested', at: 10 });
     expect(t17.auth).toEqual({ kind: 'signed_in_context_pending', identity: 'id-A' });
 
     const fromRecoverable = withoutSource(
-      { generation: 2, auth: { kind: 'recoverable_error', identity: 'id-A', reason: 'network', requestId: null, retryNotBefore: null } },
+      { generation: 2, attempt: 0, auth: { kind: 'recoverable_error', identity: 'id-A', reason: 'network', requestId: null, retryNotBefore: null } },
       { type: 'retry_requested', at: 10 },
     );
     expect(fromRecoverable.auth).toEqual({ kind: 'signed_in_context_pending', identity: 'id-A' });
@@ -497,12 +527,12 @@ describe('sin contextSource (prueba 7)', () => {
       { type: 'notice_dismissed' },
       contextLoaded(1, { kind: 'none' }),
       contextLoaded(1, { kind: 'single', membership: { tenantId: 'T-X', membershipId: 'M-X' } }),
-      { type: 'context_failed', generation: 1, failure: failure('network'), at: 0 },
+      { type: 'context_failed', generation: 1, attempt: 1, failure: failure('network'), at: 0 },
     ];
 
     for (const action of actions) {
       const result = withoutSource(
-        { generation: 1, auth: { kind: 'signed_in_context_pending', identity: 'id-A' } },
+        { generation: 1, attempt: 0, auth: { kind: 'signed_in_context_pending', identity: 'id-A' } },
         action,
       );
       expect(result.auth.kind).not.toBe('loading_context');
@@ -595,6 +625,7 @@ describe('cortes de T7 (prueba 10)', () => {
   it('T7a desde loading_context no corta y traslada el aviso', () => {
     const source: AuthStore = {
       generation: 5,
+      attempt: 0,
       auth: { kind: 'loading_context', identity: 'id-A', notice: 'workshop_access_revoked' },
     };
 
@@ -628,12 +659,10 @@ describe('cortes de T7 (prueba 10)', () => {
     const accepted = withSource(SELECTION, { type: 'tenant_selected', tenantId: 'T-B' });
     expect(accepted.generation).toBe(4);
     expect(accepted.auth).toEqual({
-      kind: 'ready',
+      kind: 'loading_context',
       identity: 'id-A',
       tenantId: 'T-B',
-      membershipId: 'M-B',
       notice: null,
-      degraded: null,
     });
 
     expect(withSource(SELECTION, { type: 'tenant_selected', tenantId: 'T-Z' })).toBe(SELECTION);
@@ -642,6 +671,7 @@ describe('cortes de T7 (prueba 10)', () => {
   it('T19 descarta el aviso', () => {
     const withNotice: AuthStore = {
       generation: 4,
+      attempt: 0,
       auth: { kind: 'no_access', identity: 'id-A', notice: 'workshop_access_revoked' },
     };
     const cleared = withSource(withNotice, { type: 'notice_dismissed' });
@@ -657,6 +687,7 @@ describe('espera de 429 (prueba 11)', () => {
     const nine = withSource(READY, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: rateLimited(9, 'req-429'),
       at: 1000,
     });
@@ -669,6 +700,7 @@ describe('espera de 429 (prueba 11)', () => {
     const capped = withSource(READY, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: rateLimited(300),
       at: 0,
     });
@@ -683,6 +715,7 @@ describe('espera de 429 (prueba 11)', () => {
     const unreadable = withSource(LOADING_CONTEXT, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: rateLimited(null),
       at: 100,
     });
@@ -695,6 +728,7 @@ describe('espera de 429 (prueba 11)', () => {
     const network = withSource(LOADING_CONTEXT, {
       type: 'context_failed',
       generation: 3,
+      attempt: 1,
       failure: failure('network'),
       at: 100,
     });
@@ -708,6 +742,7 @@ describe('espera de 429 (prueba 11)', () => {
   it('retry_requested se ignora antes de retryNotBefore', () => {
     const limited: AuthStore = {
       generation: 4,
+      attempt: 0,
       auth: {
         kind: 'recoverable_error',
         identity: 'id-A',
@@ -727,6 +762,7 @@ describe('espera de 429 (prueba 11)', () => {
   it('T18: retry_requested sobre ready degradado no cambia estado ni generación', () => {
     const degraded: AuthStore = {
       generation: 6,
+      attempt: 0,
       auth: {
         kind: 'ready',
         identity: 'id-A',
@@ -739,6 +775,112 @@ describe('espera de 429 (prueba 11)', () => {
 
     expect(withSource(degraded, { type: 'retry_requested', at: 999 })).toBe(degraded);
     expect(withSource(degraded, { type: 'retry_requested', at: 1000 })).toBe(degraded);
+  });
+});
+
+describe('intentos concurrentes en la misma generación (P2)', () => {
+  const CONTEXT_V1: WorkshopContext = {
+    tenantId: 'T-A',
+    membershipId: 'M-A',
+    userId: 'U-A',
+    workshop: { displayName: 'Taller A', timezone: 'America/Bogota', currency: 'COP' },
+    roles: ['service_advisor'],
+    permissions: [{ code: 'receptions.read', scopes: ['tenant'] }],
+  };
+
+  /** Mismo par activo (T7b, sin corte de generación) con permisos ya revocados y actualizados. */
+  const CONTEXT_V2: WorkshopContext = {
+    ...CONTEXT_V1,
+    permissions: [
+      { code: 'receptions.read', scopes: ['tenant'] },
+      { code: 'receptions.create', scopes: ['tenant'] },
+    ],
+  };
+
+  function started(generation: number, attempt: number): AuthAction {
+    return { type: 'context_load_started', generation, attempt };
+  }
+
+  function loaded(generation: number, attempt: number, context: WorkshopContext): AuthAction {
+    return {
+      type: 'context_loaded',
+      generation,
+      attempt,
+      snapshot: { kind: 'single', membership: { tenantId: 'T-A', membershipId: 'M-A' }, context },
+    };
+  }
+
+  function failed(generation: number, attempt: number, kind: NonRateLimitedKind): AuthAction {
+    return { type: 'context_failed', generation, attempt, failure: failure(kind), at: 0 };
+  }
+
+  function permissionsOf(store: AuthStore): readonly string[] {
+    return store.auth.kind === 'ready' && store.auth.context !== undefined
+      ? store.auth.context.permissions.map((permission) => permission.code)
+      : [];
+  }
+
+  const V2_CODES = ['receptions.read', 'receptions.create'];
+  // Punto de partida: `ready` en T-A/M-A con los permisos v1 vigentes.
+  const READY_V1 = withSource(READY, loaded(3, 1, CONTEXT_V1));
+
+  it('una respuesta tardía del intento anterior no sobrescribe el contexto vigente', () => {
+    const revalidating = withSource(READY_V1, started(3, 2));
+    const afterCurrent = withSource(revalidating, loaded(3, 2, CONTEXT_V2));
+    expect(permissionsOf(afterCurrent)).toEqual(V2_CODES);
+
+    const afterLate = withSource(afterCurrent, loaded(3, 1, CONTEXT_V1));
+
+    expect(afterLate).toBe(afterCurrent); // se ignora en silencio: mismo objeto, sin commit
+    expect(permissionsOf(afterLate)).toEqual(V2_CODES);
+    expect(afterLate.generation).toBe(3);
+    expect(afterLate.attempt).toBe(2);
+  });
+
+  it('un intento anterior no aplica ni siquiera antes que el vigente', () => {
+    const revalidating = withSource(READY_V1, started(3, 2));
+
+    // El intento 1 ya no es el vigente: su respuesta no puede adelantarse.
+    expect(withSource(revalidating, loaded(3, 1, CONTEXT_V1))).toBe(revalidating);
+
+    const afterCurrent = withSource(revalidating, loaded(3, 2, CONTEXT_V2));
+    expect(permissionsOf(afterCurrent)).toEqual(V2_CODES);
+  });
+
+  it('un fallo del intento anterior no sustituye el contexto nuevo ni cierra la sesión', () => {
+    const afterCurrent = withSource(
+      withSource(READY_V1, started(3, 2)),
+      loaded(3, 2, CONTEXT_V2),
+    );
+
+    expect(withSource(afterCurrent, failed(3, 1, 'network'))).toBe(afterCurrent);
+    expect(withSource(afterCurrent, failed(3, 1, 'unauthenticated'))).toBe(afterCurrent);
+    expect(withSource(afterCurrent, failed(3, 1, 'no_session'))).toBe(afterCurrent);
+    expect(permissionsOf(afterCurrent)).toEqual(V2_CODES);
+  });
+
+  it('el inicio de un intento no reabre uno anterior ya invalidado', () => {
+    const revalidating = withSource(READY_V1, started(3, 2));
+
+    expect(withSource(revalidating, started(3, 2))).toBe(revalidating); // repetido
+    expect(withSource(revalidating, started(3, 1))).toBe(revalidating); // anterior
+
+    const replayed = withSource(withSource(revalidating, started(3, 1)), loaded(3, 1, CONTEXT_V1));
+    expect(replayed).toBe(revalidating);
+  });
+
+  it('la capa de generation sigue descartando por sí sola lo anterior', () => {
+    // `attempt` alto, pero de una generación anterior: la primera capa lo descarta.
+    expect(withSource(READY_V1, loaded(2, 99, CONTEXT_V2))).toBe(READY_V1);
+    expect(
+      withSource(READY_V1, {
+        type: 'context_failed',
+        generation: 2,
+        attempt: 99,
+        failure: failure('unauthenticated'),
+        at: 0,
+      }),
+    ).toBe(READY_V1);
   });
 });
 

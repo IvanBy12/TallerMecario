@@ -109,11 +109,11 @@ describe('AuthGate', () => {
     renderState({
       kind: 'workshop_selection_required',
       identity: 'id-A',
-      memberships: [{ tenantId: 'T-A', membershipId: 'M-A' }],
+      memberships: [{ tenantId: 'T-A', membershipId: 'M-A', displayName: 'Taller de prueba' }],
       notice: null,
     });
 
-    expect(screen.getByRole('status').textContent).toContain('selección de taller aún no está disponible');
+    expect(screen.getByRole('status').textContent).toContain('Elige el taller con el que deseas trabajar.');
     expect(document.body.textContent).not.toContain('T-A');
     expect(document.body.textContent).not.toContain('M-A');
   });

@@ -5,14 +5,14 @@
  * añadir una sección es añadir una entrada, no editar componentes.
  *
  * `requiredPermission` existe para poder asociar el código de permiso cuando el backend entregue
- * el catálogo efectivo (G5/TA-02). Hoy vale `null` en todas las entradas: **no** se ha inventado
+ * el catálogo efectivo (G5/TA-02). Cada entrada usa un código estable del catálogo aprobado: **no** se ha inventado
  * ningún permiso, ninguna membership ni ningún taller. El filtro por permisos es UX; la
  * autorización real pertenece al backend (`docs/agents/tenant-rbac-rules.md`).
  */
 
 /**
  * Código de permiso del catálogo aprobado (`docs/domain/roles-and-permissions.md`).
- * Se trata como cadena opaca: el formato que devuelve el backend no está congelado (FE-DOC-09).
+ * Se trata como cadena opaca: el backend devuelve códigos y scopes según me-and-workshop-context.md.
  */
 export type PermissionCode = string;
 
@@ -64,7 +64,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'Catálogo y stock',
         ],
         icon: 'panel',
-        requiredPermission: null,
+        requiredPermission: 'dashboard.operational.read',
       },
       {
         id: 'recepciones',
@@ -78,7 +78,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'Video, fotos, lista de comprobación, daños y firma',
         ],
         icon: 'reception',
-        requiredPermission: null,
+        requiredPermission: 'receptions.read',
       },
       {
         id: 'ordenes',
@@ -92,7 +92,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'Comunicaciones y entrega',
         ],
         icon: 'order',
-        requiredPermission: null,
+        requiredPermission: 'orders.read',
       },
     ],
   },
@@ -112,7 +112,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'Comunicaciones',
         ],
         icon: 'customer',
-        requiredPermission: null,
+        requiredPermission: 'customers.read',
       },
       {
         id: 'vehiculos',
@@ -126,7 +126,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'Evidencia y mantenimiento',
         ],
         icon: 'vehicle',
-        requiredPermission: null,
+        requiredPermission: 'vehicles.read',
       },
       {
         id: 'inventario',
@@ -140,7 +140,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'Movimientos y consumo por orden',
         ],
         icon: 'inventory',
-        requiredPermission: null,
+        requiredPermission: 'inventory.read',
       },
       {
         id: 'configuracion',
@@ -154,7 +154,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'WhatsApp, plantillas y suscripción',
         ],
         icon: 'settings',
-        requiredPermission: null,
+        requiredPermission: 'workshop.read',
       },
     ],
   },

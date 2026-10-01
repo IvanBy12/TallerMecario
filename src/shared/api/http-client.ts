@@ -265,7 +265,7 @@ function resolveTarget(apiOrigin: string, request: GetRequest): ResolvedTarget |
   if (url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') {
     return null;
   }
-  if (tenantId !== undefined && !TENANT_ID_PATTERN.test(tenantId)) {
+  if (tenantId !== undefined && (!TENANT_ID_PATTERN.test(tenantId) || tenantId === '00000000-0000-0000-0000-000000000000' || tenantId === 'ffffffff-ffff-ffff-ffff-ffffffffffff')) {
     return null;
   }
   return { url: url.toString(), tenantId: tenantId ?? null };

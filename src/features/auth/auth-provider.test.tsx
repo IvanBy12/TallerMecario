@@ -6,6 +6,7 @@ import type { ApiFailure } from '@/shared/api/api-failure';
 import { createApiClient, type ApiResult } from '@/shared/api/http-client';
 
 import { AuthContextProvider, AuthGateConnected, useAuthContext } from './auth-provider';
+import type { ResourceScope, WorkshopContext } from './me-contract';
 import type { AuthSessionPort, SessionSnapshot } from './session-port';
 import type {
   ContextLoadAttempt,
@@ -43,6 +44,11 @@ function Probe() {
     <>
       <span data-testid="kind">{state.kind}</span>
       <span data-testid="tenant">{state.kind === 'ready' ? state.tenantId : ''}</span>
+      <span data-testid="permissions">
+        {state.kind === 'ready' && state.context !== undefined
+          ? state.context.permissions.map((permission) => permission.code).join(',')
+          : ''}
+      </span>
       <AuthGateConnected />
     </>
   );
@@ -390,6 +396,88 @@ describe('con contextSource falso (G1/G3)', () => {
       expect(attempts.length).toBeGreaterThan(0);
     });
     expect(attempts.filter((attempt) => !attempt.scope.signal.aborted)).toHaveLength(1);
+  });
+});
+
+describe('revalidación concurrente en la misma generación (P2)', () => {
+  const TENANT_SCOPE: readonly ResourceScope[] = ['tenant'];
+
+  function workshopContext(permissionCodes: readonly string[]): WorkshopContext {
+    return {
+      tenantId: 'T-A',
+      membershipId: 'M-A',
+      userId: 'U-A',
+      workshop: { displayName: 'Taller A', timezone: 'America/Bogota', currency: 'COP' },
+      roles: ['service_advisor'],
+      permissions: permissionCodes.map((code) => ({ code, scopes: TENANT_SCOPE })),
+    };
+  }
+
+  function single(permissionCodes: readonly string[]): ApiResult<WorkshopContextSnapshot> {
+    return {
+      ok: true,
+      data: {
+        kind: 'single',
+        membership: { tenantId: 'T-A', membershipId: 'M-A' },
+        context: workshopContext(permissionCodes),
+      },
+    };
+  }
+
+  it('un intento anterior que responde tarde no sobrescribe el contexto vigente', async () => {
+    const attempts: ContextLoadAttempt[] = [];
+    const pending: ((value: ApiResult<WorkshopContextSnapshot>) => void)[] = [];
+    const source: WorkshopContextSource = {
+      load: (attempt) => {
+        attempts.push(attempt);
+        if (attempts.length === 1) {
+          // La carga inicial declara acceso perdido: la app queda con aviso y recarga sola.
+          return Promise.resolve({
+            ok: false,
+            failure: { kind: 'tenant_access_denied', status: 403, code: null, requestId: null },
+          });
+        }
+        return new Promise((resolve) => {
+          pending.push(resolve);
+        });
+      },
+    };
+
+    render(<Harness snapshot={{ status: 'signed_in', identity: 'id-A' }} source={source} />);
+
+    await waitFor(() => {
+      expect(attempts).toHaveLength(2);
+    });
+
+    // El usuario descarta el aviso mientras la recarga sigue en vuelo. El recorte del aviso no
+    // cambia la generación, así que los dos intentos vivos comparten generación: exactamente el
+    // caso que la guarda por attempt debe resolver.
+    fireEvent.click(screen.getByRole('button', { name: 'Descartar aviso' }));
+
+    await waitFor(() => {
+      expect(attempts).toHaveLength(3);
+    });
+
+    const [staleAttempt, currentAttempt] = pending;
+    expect(attempts[2]?.scope.generation).toBe(attempts[1]?.scope.generation);
+    expect(attempts[1]?.scope.signal.aborted).toBe(false);
+    expect(attempts[2]?.scope.signal.aborted).toBe(false);
+
+    // El intento vigente responde primero, con los permisos actualizados.
+    currentAttempt?.(single(['receptions.read', 'receptions.create']));
+    await waitFor(() => {
+      expect(kind()).toBe('ready');
+    });
+    expect(screen.getByTestId('permissions').textContent).toBe('receptions.read,receptions.create');
+
+    // El intento anterior responde después con los permisos antiguos: no puede hacer commit.
+    staleAttempt?.(single(['receptions.read']));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(kind()).toBe('ready');
+    expect(screen.getByTestId('permissions').textContent).toBe('receptions.read,receptions.create');
   });
 });
 

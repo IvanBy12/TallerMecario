@@ -43,12 +43,12 @@ describe('estructura declarativa de navegación', () => {
     );
   });
 
-  it('no declara ningún permiso: el backend todavía no entrega catálogo', () => {
-    expect(NAVIGATION_ITEMS.every((item) => item.requiredPermission === null)).toBe(true);
+  it('declara permisos del catálogo backend', () => {
+    expect(NAVIGATION_ITEMS.every((item) => item.requiredPermission !== null)).toBe(true);
   });
 
-  it('sin catálogo de permisos no filtra nada', () => {
-    expect(visibleSections(NAVIGATION_SECTIONS, null)).toHaveLength(NAVIGATION_SECTIONS.length);
+  it('sin catálogo de permisos deniega la navegación', () => {
+    expect(visibleSections(NAVIGATION_SECTIONS, null)).toHaveLength(0);
   });
 
   it('una entrada con permiso requerido sólo es visible si el catálogo lo concede', () => {
@@ -62,4 +62,10 @@ describe('estructura declarativa de navegación', () => {
     expect(visibleSections(sections, null)).toHaveLength(0);
     expect(visibleSections(sections, new Set(['clientes.leer']))).toHaveLength(1);
   });
+});
+
+it('filtra el catálogo real por permisos efectivos, incluidos scopes restringidos', () => {
+  const permissions = [{ code: 'vehicles.read', scopes: ['assigned'] }, { code: 'orders.read', scopes: ['quality_control'] }];
+  expect(visibleSections(NAVIGATION_SECTIONS, new Set(permissions.map((permission) => permission.code)))
+    .flatMap((section) => section.items.map((item) => item.id))).toEqual(['ordenes', 'vehiculos']);
 });

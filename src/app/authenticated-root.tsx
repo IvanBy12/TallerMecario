@@ -20,9 +20,10 @@ export function AuthenticatedRoot() {
     return <AuthGate state={state} actions={actions} />;
   }
 
+  const grantedPermissions = new Set(state.kind === 'ready' ? state.context?.permissions.map((permission) => permission.code) ?? [] : []);
   return (
     <BrowserRouter>
-      <AppRoutes shellStatus={shellStatus} onSignOut={actions.onSignOut} />
+      <AppRoutes shellStatus={shellStatus} onSignOut={actions.onSignOut} grantedPermissions={grantedPermissions} onChangeWorkshop={actions.onChangeWorkshop} workshopName={state.kind === 'ready' ? state.context?.workshop.displayName : undefined} />
     </BrowserRouter>
   );
 }
