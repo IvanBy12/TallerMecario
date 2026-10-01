@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# --- TallerMecario frontend (S3-B01) ---
+# Editores y sistema operativo
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
