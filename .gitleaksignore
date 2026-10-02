@@ -1,0 +1,3 @@
+# False positive: synthetic Clerk publishable key in a public-routing test fixture.
+# Scoped to this historical finding; all other commits, paths and findings remain scanned.
+e10c8229714cb126065ae06556e20f82d985838f:src/app/public-routes.test.tsx:generic-api-key:35

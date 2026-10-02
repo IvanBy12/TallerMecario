@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -22,7 +23,7 @@ vi.mock('@/features/auth/clerk-session', () => ({
 
 describe('AuthenticatedRoot', () => {
   it('con sesión iniciada y contexto de taller pendiente monta el shell con su aviso', async () => {
-    renderWithAuth(<AuthenticatedRoot />, { snapshot: signedInSnapshot() });
+    renderWithAuth(<MemoryRouter initialEntries={['/panel']}><AuthenticatedRoot /></MemoryRouter>, { snapshot: signedInSnapshot() });
 
     expect(await screen.findByRole('alert')).toBeDefined();
     expect(screen.queryByRole('link', { name: 'Clientes' })).toBeNull();
@@ -31,7 +32,7 @@ describe('AuthenticatedRoot', () => {
   });
 
   it('sin sesión deja la pantalla en manos del AuthGate y no monta navegación', async () => {
-    renderWithAuth(<AuthenticatedRoot />, { snapshot: signedOutSnapshot() });
+    renderWithAuth(<MemoryRouter initialEntries={['/panel']}><AuthenticatedRoot /></MemoryRouter>, { snapshot: signedOutSnapshot() });
 
     expect(
       await screen.findByRole('heading', { level: 2, name: 'Inicia sesión' }),
@@ -41,7 +42,7 @@ describe('AuthenticatedRoot', () => {
   });
 
   it('mientras carga la identidad no monta el shell', async () => {
-    renderWithAuth(<AuthenticatedRoot />, { snapshot: loadingSnapshot() });
+    renderWithAuth(<MemoryRouter initialEntries={['/panel']}><AuthenticatedRoot /></MemoryRouter>, { snapshot: loadingSnapshot() });
 
     expect(await screen.findByText('Cargando sesión…')).toBeDefined();
     expect(screen.queryByRole('navigation')).toBeNull();

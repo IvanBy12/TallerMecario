@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '@/app/App';
 
@@ -7,8 +7,10 @@ const clerkKey = (environment: 'test' | 'live', payload = 'Zm9vLmJhcg') =>
   ['pk', environment, payload].join('_');
 
 describe('App', () => {
+  beforeEach(() => { window.history.replaceState(null, '', '/panel'); });
   afterEach(() => {
     vi.restoreAllMocks();
+    window.history.replaceState(null, '', '/');
   });
 
   it('caso 1: entorno público inválido muestra la pantalla de configuración', () => {
