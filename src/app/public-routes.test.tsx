@@ -101,6 +101,19 @@ describe('S3-UI-01: rutas públicas y frontera de sesión', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('/login/ conserva LoginLayout con configuración de auth faltante sin redirigir', () => {
+    mount('/login/', {
+      ok: true,
+      env: { appEnv: 'local', apiOrigin: null, clerkPublishableKey: null },
+    });
+    expect(screen.getByRole('heading', { level: 1, name: 'Bienvenido a tu taller.' })).toBeDefined();
+    expect(screen.getByRole('main').id).toBe('login-content');
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(window.location.pathname).toBe('/login/');
+    expect(session.mountClerk).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('el CTA de inicio de sesión navega a /login', async () => {
     mount('/');
     const nav = screen.getByRole('navigation', { name: 'Navegación pública' });

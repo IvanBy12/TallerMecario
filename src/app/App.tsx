@@ -16,7 +16,7 @@ function SessionArea({ envResult }: AppProps) {
   const { pathname } = useLocation();
   if (!envResult.ok || envResult.env.apiOrigin === null || envResult.env.clerkPublishableKey === null) {
     const panel = <ConfigIssuesPanel issues={envResult.ok ? 'missing_auth_config' : envResult.issues} />;
-    return pathname === '/login'
+    return pathname === '/login' || pathname === '/login/'
       ? <LoginLayout>{panel}</LoginLayout>
       : <main className="app"><h1>TallerMecario</h1>{panel}</main>;
   }
