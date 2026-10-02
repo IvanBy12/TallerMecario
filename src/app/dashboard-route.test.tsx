@@ -1,3 +1,10 @@
+import { AuthContextProvider } from '@/features/auth/auth-provider';
+import type { WorkshopContext } from '@/features/auth/me-contract';
+import type { WorkshopContextSource } from '@/features/auth/workshop-context';
+import { createApiClient } from '@/shared/api/http-client';
+import { createFakeSessionPort, signedInSnapshot } from '@/test/render-with-auth';
+import { AuthenticatedRoot } from './authenticated-root';
+
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -38,6 +45,7 @@ function renderPanel(options: {
         workshopName={options.workshopName ?? 'Taller Alfa'}
         grantedPermissions={new Set(options.permissions)}
         dashboardDataSource={options.dataSource ?? instant}
+        receptionRuntime={{ identity: 'demo-session', tenantId: 'demo-tenant', apiClient: createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'no_session' }) }), permissions: options.permissions.map((code) => ({ code, scopes: ['tenant'] })) }}
       />
     </MemoryRouter>,
   );
@@ -67,9 +75,9 @@ describe('Dashboard operativo en /panel', () => {
 
     const activity = screen.getByRole('region', { name: 'Actividad reciente' });
     expect(within(activity).getAllByRole('listitem')).toHaveLength(6);
-    expect(within(activity).getByText('KLM 482')).toBeDefined();
+    expect(within(activity).getByText('DEMO-001')).toBeDefined();
     expect(within(activity).getByText('Recepción creada')).toBeDefined();
-    expect(within(activity).getByText('Laura Gómez')).toBeDefined();
+    expect(within(activity).getByText('Cliente demo 01')).toBeDefined();
 
     const pending = screen.getByRole('region', { name: 'Requiere atención' });
     expect(within(pending).getByText('Diagnósticos pendientes')).toBeDefined();
@@ -118,10 +126,29 @@ describe('Dashboard operativo en /panel', () => {
     expect(screen.queryByRole('link', { name: 'Nueva recepción' })).toBeNull();
   });
 
-  it('el acceso depende solo del permiso efectivo, no del taller ni de nombres de rol', async () => {
-    // AppRoutes no recibe roles: un conjunto con solo el permiso basta, sea cual sea el rol del usuario.
-    renderPanel({ permissions: ['dashboard.operational.read'], workshopName: 'owner admin technician service_advisor' });
+  it.each<{ roles: WorkshopContext['roles'] }>([{ roles: ['owner'] }, { roles: ['technician'] }, { roles: ['admin', 'service_advisor'] }])('context.roles=%j no cambia el acceso con el mismo grant tenant', async ({ roles }) => {
+    const port = createFakeSessionPort(signedInSnapshot());
+    const apiClient = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'no_session' }) });
+    const context: WorkshopContext = {
+      tenantId: 'demo-tenant', membershipId: 'demo-membership', userId: 'demo-user',
+      workshop: { displayName: 'Taller demo', timezone: 'America/Bogota', currency: 'COP' },
+      roles, permissions: [{ code: 'dashboard.operational.read', scopes: ['tenant'] }],
+    };
+    const contextSource: WorkshopContextSource = { load: () => Promise.resolve({ ok: true, data: { kind: 'single', membership: { tenantId: context.tenantId, membershipId: context.membershipId }, context } }) };
+    render(<AuthContextProvider port={port} apiClient={apiClient} contextSource={contextSource}><MemoryRouter initialEntries={['/panel']}><AuthenticatedRoot /></MemoryRouter></AuthContextProvider>);
     expect(await screen.findByRole('region', { name: 'Indicadores de hoy' })).toBeDefined();
+  });
+
+  it('owner sin el grant operacional no recibe acceso por su rol', async () => {
+    const port = createFakeSessionPort(signedInSnapshot());
+    const apiClient = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'no_session' }) });
+    const contextSource: WorkshopContextSource = { load: () => Promise.resolve({ ok: true, data: {
+      kind: 'single', membership: { tenantId: 'demo-tenant', membershipId: 'demo-member' },
+      context: { tenantId: 'demo-tenant', membershipId: 'demo-member', userId: 'demo-user', workshop: { displayName: 'Taller demo', timezone: 'America/Bogota', currency: 'COP' }, roles: ['owner'], permissions: [{ code: 'dashboard.business.read', scopes: ['tenant'] }] },
+    } }) };
+    render(<AuthContextProvider port={port} apiClient={apiClient} contextSource={contextSource}><MemoryRouter initialEntries={['/panel']}><AuthenticatedRoot /></MemoryRouter></AuthContextProvider>);
+    expect((await screen.findByRole('alert')).textContent).toContain('No tienes permiso');
+    expect(screen.queryByRole('region', { name: 'Indicadores de hoy' })).toBeNull();
   });
 
   it('sin dashboard.operational.read muestra acceso restringido y no lee datos', () => {

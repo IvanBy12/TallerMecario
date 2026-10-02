@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 
 import { StatusBanner } from '@/shared/ui/status-banner';
@@ -31,10 +31,26 @@ export interface AppShellProps {
 export function AppShell({ status, onSignOut, grantedPermissions = null, workshopName, onChangeWorkshop }: AppShellProps) {
   const [isNavigationOpen, setIsNavigationOpen] = useState(false);
   const navigationId = useId();
+  const shellRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const focusMainOnCloseRef = useRef(false);
   const sections = visibleSections(NAVIGATION_SECTIONS, grantedPermissions);
+
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const shell = shellRef.current;
+    if (header === null || shell === null) return;
+    const measure = () => {
+      shell.style.setProperty('--shell-header-height', `${String(header.getBoundingClientRect().height)}px`);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => { observer.disconnect(); };
+  }, []);
 
   useEffect(() => {
     if (!isNavigationOpen) {
@@ -64,12 +80,12 @@ export function AppShell({ status, onSignOut, grantedPermissions = null, worksho
   };
 
   return (
-    <div className={`shell${isNavigationOpen ? ' shell--nav-open' : ''}`}>
+    <div ref={shellRef} className={`shell${isNavigationOpen ? ' shell--nav-open' : ''}`}>
       <a className="shell__skip-link" href="#contenido-principal">
         Saltar al contenido principal
       </a>
 
-      <header className="shell__header">
+      <header ref={headerRef} className="shell__header">
         <button
           type="button"
           ref={menuButtonRef}

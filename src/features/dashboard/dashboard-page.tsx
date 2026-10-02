@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
+import { can as hasPermission, type EffectivePermissions } from '@/shared/auth/effective-permissions';
 import { EmptyState } from '@/shared/ui/empty-state';
 import { StatusBanner } from '@/shared/ui/status-banner';
 
@@ -14,10 +15,15 @@ import type { DashboardRoutes } from './dashboard-routes';
 import { DASHBOARD_OPERATIONAL_PERMISSION, isSnapshotEmpty } from './dashboard-types';
 import { useDashboardSnapshot } from './use-dashboard-snapshot';
 
+export interface DashboardContext {
+  readonly identity: string;
+  readonly tenantId: string;
+  readonly permissions: EffectivePermissions;
+}
+
 export interface DashboardPageProps {
   readonly workshopName?: string;
-  /** Permisos efectivos (códigos) del contexto G5. La autorización es sólo por permiso, nunca por rol. */
-  readonly grantedPermissions: ReadonlySet<string> | null;
+  readonly context?: DashboardContext;
   readonly dataSource: DashboardDataSource;
   readonly routes: DashboardRoutes;
   readonly now?: () => Date;
@@ -27,8 +33,8 @@ export interface DashboardPageProps {
  * Centro operativo del taller. El estado «forbidden» no monta el contenido ni lee datos: sin
  * `dashboard.operational.read` no se consulta la fuente.
  */
-export function DashboardPage({ workshopName, grantedPermissions, dataSource, routes, now = () => new Date() }: DashboardPageProps) {
-  const can = (permission: string) => grantedPermissions?.has(permission) === true;
+export function DashboardPage({ workshopName, context, dataSource, routes, now = () => new Date() }: DashboardPageProps) {
+  const can = (permission: string) => hasPermission(context?.permissions ?? [], permission, true);
 
   if (!can(DASHBOARD_OPERATIONAL_PERMISSION)) {
     return (
@@ -56,7 +62,12 @@ export function DashboardPage({ workshopName, grantedPermissions, dataSource, ro
   return (
     <div className="dash">
       <DashboardHeading workshopName={workshopName} action={cta} />
-      <DashboardContent dataSource={dataSource} routes={routes} can={can} now={now} cta={cta} />
+      {dataSource.isDemo === true ? (
+        <StatusBanner tone="info" title="Datos de demostración">
+          <p>El resumen todavía no está conectado al servidor: las cifras y la actividad son de ejemplo.</p>
+        </StatusBanner>
+      ) : null}
+      <DashboardContent dataSource={dataSource} contextKey={JSON.stringify([context?.identity, context?.tenantId, context?.permissions])} routes={routes} can={can} now={now} cta={cta} />
     </div>
   );
 }
@@ -75,6 +86,7 @@ function DashboardHeading({ workshopName, action }: { readonly workshopName?: st
 }
 
 interface ContentProps {
+  readonly contextKey: string;
   readonly dataSource: DashboardDataSource;
   readonly routes: DashboardRoutes;
   readonly can: (permission: string) => boolean;
@@ -82,8 +94,8 @@ interface ContentProps {
   readonly cta: ReactNode;
 }
 
-function DashboardContent({ dataSource, routes, can, now, cta }: ContentProps) {
-  const { state, retry } = useDashboardSnapshot(dataSource);
+function DashboardContent({ dataSource, contextKey, routes, can, now, cta }: ContentProps) {
+  const { state, retry } = useDashboardSnapshot(dataSource, contextKey);
   const [renderedAt] = useState(now);
 
   if (state.kind === 'loading') {
@@ -132,11 +144,6 @@ function DashboardContent({ dataSource, routes, can, now, cta }: ContentProps) {
 
   return (
     <>
-      {dataSource.isDemo === true ? (
-        <StatusBanner tone="info" title="Datos de demostración">
-          <p>El resumen todavía no está conectado al servidor: las cifras y la actividad son de ejemplo.</p>
-        </StatusBanner>
-      ) : null}
       <DashboardKpiGrid kpis={snapshot.kpis} />
       <div className="dash-layout">
         <DashboardActivity items={snapshot.activity} now={renderedAt} />

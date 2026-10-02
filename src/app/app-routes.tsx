@@ -35,7 +35,7 @@ export function AppRoutes({ dashboardDataSource = mockDashboardDataSource, shell
     <Routes>
       <Route element={<AppShell status={shellStatus} onSignOut={onSignOut} grantedPermissions={grantedPermissions} onChangeWorkshop={onChangeWorkshop} workshopName={workshopName} />}>
         <Route index element={<Navigate to={DASHBOARD_PATH} replace />} />
-        <Route path={DASHBOARD_PATH} element={<DashboardPage workshopName={workshopName} grantedPermissions={grantedPermissions} dataSource={dashboardDataSource} routes={DASHBOARD_ROUTES} />} />
+        <Route path={DASHBOARD_PATH} element={<DashboardPage workshopName={workshopName} context={receptionRuntime} dataSource={dashboardDataSource} routes={DASHBOARD_ROUTES} />} />
         <Route element={receptionRuntime === undefined ? <section><h1>Recepciones</h1><p role="status">Selecciona un taller para consultar recepciones.</p></section> : <ReceptionProvider key={`${receptionRuntime.identity}:${receptionRuntime.tenantId}:${JSON.stringify(receptionRuntime.permissions)}`} runtime={receptionRuntime}><Outlet /></ReceptionProvider>}>
           <Route path={RECEPTIONS_PATH} element={<ReceptionsListPage />} />
           <Route path={NEW_RECEPTION_PATH} element={<NewReceptionPage />} />

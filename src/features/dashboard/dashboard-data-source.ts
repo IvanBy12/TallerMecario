@@ -50,12 +50,12 @@ export function createMockDashboardDataSource(options: MockDashboardOptions = {}
 function buildMockSnapshot(now: Date): DashboardSnapshot {
   const ago = (minutes: number) => new Date(now.getTime() - minutes * MINUTE).toISOString();
   const activity: readonly DashboardActivityItem[] = [
-    { id: 'a1', event: 'reception_created', plate: 'KLM 482', vehicle: 'Mazda 3 2019', customer: 'Laura Gómez', occurredAt: ago(6) },
-    { id: 'a2', event: 'ready_for_delivery', plate: 'TRW 915', vehicle: 'Renault Duster 2021', customer: 'Carlos Pineda', occurredAt: ago(34) },
-    { id: 'a3', event: 'awaiting_authorization', plate: 'HBD 207', vehicle: 'Chevrolet Spark 2017', customer: 'Marta Rojas', occurredAt: ago(75) },
-    { id: 'a4', event: 'repair_started', plate: 'FQP 630', vehicle: 'Kia Picanto 2020', customer: 'Andrés Duarte', occurredAt: ago(140) },
-    { id: 'a5', event: 'quote_sent', plate: 'WXN 118', vehicle: 'Toyota Hilux 2018', customer: 'Transportes del Valle', occurredAt: ago(260) },
-    { id: 'a6', event: 'diagnosis_started', plate: 'JCT 774', vehicle: 'Nissan Versa 2022', customer: 'Sofía Herrera', occurredAt: ago(1500) },
+    { id: 'a1', event: 'reception_created', plate: 'DEMO-001', vehicle: 'Mazda 3 2019', customer: 'Cliente demo 01', occurredAt: ago(6) },
+    { id: 'a2', event: 'ready_for_delivery', plate: 'DEMO-002', vehicle: 'Renault Duster 2021', customer: 'Cliente demo 02', occurredAt: ago(34) },
+    { id: 'a3', event: 'awaiting_authorization', plate: 'DEMO-003', vehicle: 'Chevrolet Spark 2017', customer: 'Cliente demo 03', occurredAt: ago(75) },
+    { id: 'a4', event: 'repair_started', plate: 'DEMO-004', vehicle: 'Kia Picanto 2020', customer: 'Cliente demo 04', occurredAt: ago(140) },
+    { id: 'a5', event: 'quote_sent', plate: 'DEMO-005', vehicle: 'Toyota Hilux 2018', customer: 'Cliente demo 05', occurredAt: ago(260) },
+    { id: 'a6', event: 'diagnosis_started', plate: 'DEMO-006', vehicle: 'Nissan Versa 2022', customer: 'Cliente demo 06', occurredAt: ago(1500) },
   ];
   return {
     kpis: [

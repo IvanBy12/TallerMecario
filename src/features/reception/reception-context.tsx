@@ -1,10 +1,8 @@
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from 'react';
 import type { ApiClient } from '@/shared/api/http-client';
 import { createReceptionApi, type ReceptionApi } from './reception-api';
-export type EffectivePermissions = readonly {
-    readonly code: string;
-    readonly scopes: readonly string[];
-}[];
+export { can, type EffectivePermissions } from '@/shared/auth/effective-permissions';
+import type { EffectivePermissions } from '@/shared/auth/effective-permissions';
 export interface ReceptionRuntime {
     readonly apiClient: ApiClient;
     readonly identity: string;
@@ -35,7 +33,4 @@ export function useReception() {
     if (value === null)
         throw new Error('ReceptionProvider requerido');
     return value;
-}
-export function can(permissions: EffectivePermissions, code: string, tenant = false) {
-    return permissions.some((p) => p.code === code && (!tenant || p.scopes.includes('tenant')));
 }
