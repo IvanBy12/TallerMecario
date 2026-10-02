@@ -10,7 +10,7 @@ import { shellStatusOf } from './shell-status';
 
 /** Conserva los estados y permisos de G1–G5 dentro del router compartido. */
 export function AuthenticatedRoot({ isLogin = false }: { readonly isLogin?: boolean }) {
-  const { state, actions } = useAuthContext();
+  const { state, actions, apiClient } = useAuthContext();
   const shellStatus = shellStatusOf(state);
 
   if (shellStatus === null) {
@@ -23,5 +23,5 @@ export function AuthenticatedRoot({ isLogin = false }: { readonly isLogin?: bool
   }
 
   const grantedPermissions = new Set(state.kind === 'ready' ? state.context?.permissions.map((permission) => permission.code) ?? [] : []);
-  return <AppRoutes shellStatus={shellStatus} onSignOut={actions.onSignOut} grantedPermissions={grantedPermissions} onChangeWorkshop={actions.onChangeWorkshop} workshopName={state.kind === 'ready' ? state.context?.workshop.displayName : undefined} />;
+  return <AppRoutes receptionRuntime={state.kind === 'ready' && state.context !== undefined ? { apiClient, identity: state.identity, tenantId: state.tenantId, permissions: state.context.permissions } : undefined} shellStatus={shellStatus} onSignOut={actions.onSignOut} grantedPermissions={grantedPermissions} onChangeWorkshop={actions.onChangeWorkshop} workshopName={state.kind === 'ready' ? state.context?.workshop.displayName : undefined} />;
 }
