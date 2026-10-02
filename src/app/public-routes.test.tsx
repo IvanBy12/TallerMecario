@@ -206,7 +206,7 @@ describe('S3-UI-01: rutas públicas y frontera de sesión', () => {
         : { context: { tenantId, membershipId, userId, workshop: { displayName: 'Taller de ejemplo', timezone: 'America/Bogota', currency: 'COP' }, roles: ['owner'], permissions: [{ code: 'dashboard.operational.read', scopes: ['tenant'] }] } },
     ), { status: 200, headers: { 'Content-Type': 'application/json' } })));
     mount('/login');
-    expect(await screen.findByRole('heading', { level: 1, name: 'Panel' })).toBeDefined();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Resumen del taller' })).toBeDefined();
     expect(window.location.pathname).toBe('/panel');
     expect(screen.queryByText('Panel de inicio de sesión de Clerk')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Clientes' })).toBeNull();
@@ -252,10 +252,10 @@ describe('S3-UI-01: rutas públicas y frontera de sesión', () => {
     expect(screen.getByRole('button', { name: 'Taller Alfa' })).toBeDefined();
     fireEvent.click(screen.getByRole('button', { name: 'Taller Beta' }));
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Panel' })).toBeDefined();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Resumen del taller' })).toBeDefined();
     expect(window.location.pathname).toBe('/panel');
     expect(screen.queryByRole('heading', { name: 'Selecciona un taller' })).toBeNull();
-    expect(screen.getByText('Taller Beta')).toBeDefined();
+    expect(within(screen.getByRole('main')).getByText('Taller Beta')).toBeDefined();
     expect(screen.queryByText('Taller Alfa')).toBeNull();
     // G5 hace un bootstrap para descubrir los nombres y otro para validar la selección.
     // La navegación al panel no debe iniciar un tercero ni desmontar el proveedor.

@@ -32,13 +32,13 @@ const mainHeading = (name: string) => screen.getByRole('heading', { level: 1, na
 describe('rutas de la aplicación', () => {
   it('la raíz redirige al panel', () => {
     renderRoutes({ initialEntries: ['/'] });
-    expect(mainHeading('Panel')).toBeDefined();
+    expect(mainHeading('Resumen del taller')).toBeDefined();
   });
 
   it('cada sección declarada tiene su propia página', () => {
     for (const item of NAVIGATION_ITEMS) {
       const view = renderRoutes({ initialEntries: [item.path] });
-      expect(mainHeading(item.label)).toBeDefined();
+      expect(mainHeading(item.id === 'panel' ? 'Resumen del taller' : item.label)).toBeDefined();
       view.unmount();
     }
   });
@@ -66,7 +66,7 @@ describe('rutas de la aplicación', () => {
     const back = screen.getByRole('link', { name: 'Volver al panel' });
     expect(back.getAttribute('href')).toBe('/panel');
     fireEvent.click(back);
-    expect(mainHeading('Panel')).toBeDefined();
+    expect(mainHeading('Resumen del taller')).toBeDefined();
   });
 
   it('el menú móvil se abre, se cierra con Escape y se cierra al navegar', () => {
@@ -113,7 +113,7 @@ describe('rutas de la aplicación', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(document.querySelector('.shell--nav-open')).toBeNull();
     expect(document.activeElement).toBe(toggle);
-    expect(mainHeading('Panel')).toBeDefined();
+    expect(mainHeading('Resumen del taller')).toBeDefined();
   });
 
   it('activar un enlace del menú móvil cambia de ruta y enfoca el contenido principal', () => {
