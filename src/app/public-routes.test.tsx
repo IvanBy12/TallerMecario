@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '@/app/App';
@@ -10,24 +10,31 @@ import type { PublicEnvResult } from '@/shared/config/public-env';
 import { PUBLIC_SECTIONS, TRIAL_PATH } from '@/features/public/public-links';
 
 const session = vi.hoisted(() => {
-  const state: { snapshot: AuthSessionPort['snapshot']; mountClerk: ReturnType<typeof vi.fn<() => void>> } = {
+  const state: { snapshot: AuthSessionPort['snapshot']; mountClerk: ReturnType<typeof vi.fn<() => void>>; unmountClerk: ReturnType<typeof vi.fn<() => void>> } = {
     snapshot: { status: 'signed_out' },
     mountClerk: vi.fn(),
+    unmountClerk: vi.fn(),
   };
   return state;
 });
 
 vi.mock('@/features/auth/clerk-session', () => ({
   ClerkAuthSessionProvider: ({ children }: { readonly children: ReactNode }) => {
-    session.mountClerk();
+    useEffect(() => {
+      session.mountClerk();
+      return () => { session.unmountClerk(); };
+    }, []);
     return <>{children}</>;
   },
   ClerkSignInPanel: () => <p>Panel de inicio de sesión de Clerk</p>,
-  useAuthSessionPort: (): AuthSessionPort => ({
-    snapshot: session.snapshot,
-    getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic-test-token' }),
-    signOut: () => Promise.resolve(),
-  }),
+  useAuthSessionPort: (): AuthSessionPort => {
+    const snapshot = session.snapshot;
+    return useMemo(() => ({
+      snapshot,
+      getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic-test-token' }),
+      signOut: () => Promise.resolve(),
+    }), [snapshot]);
+  },
 }));
 
 const configuredEnv: PublicEnvResult = {
@@ -38,6 +45,10 @@ const tenantId = '11111111-1111-4111-8111-111111111111';
 const membershipId = '22222222-2222-4222-8222-222222222222';
 const userId = '33333333-3333-4333-8333-333333333333';
 
+function requestUrl(input: RequestInfo | URL): string {
+  return typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+}
+
 function mount(path: string, envResult = configuredEnv) {
   window.history.replaceState(null, '', path);
   return render(<App envResult={envResult} />);
@@ -46,6 +57,7 @@ function mount(path: string, envResult = configuredEnv) {
 beforeEach(() => {
   session.snapshot = { status: 'signed_out' };
   session.mountClerk.mockClear();
+  session.unmountClerk.mockClear();
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected request'));
 });
 
@@ -75,6 +87,17 @@ describe('S3-UI-01: rutas públicas y frontera de sesión', () => {
     mount('/login');
     expect(screen.getByRole('heading', { level: 1, name: 'Bienvenido a tu taller.' })).toBeDefined();
     expect(await screen.findByText('Panel de inicio de sesión de Clerk')).toBeDefined();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each<PublicEnvResult>([
+    { ok: false, issues: [{ variable: 'VITE_CLERK_PUBLISHABLE_KEY', reason: 'invalid_publishable_key' }] },
+    { ok: true, env: { appEnv: 'local', apiOrigin: null, clerkPublishableKey: null } },
+  ])('/login mantiene su layout cuando falta configuración válida (%j)', (envResult) => {
+    mount('/login', envResult);
+    expect(screen.getByRole('heading', { level: 1, name: 'Bienvenido a tu taller.' })).toBeDefined();
+    expect(screen.getByRole('alert')).toBeDefined();
+    expect(session.mountClerk).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -165,7 +188,7 @@ describe('S3-UI-01: rutas públicas y frontera de sesión', () => {
   it('la sesión existente en /login entra al panel respetando el contexto y permisos G5', async () => {
     session.snapshot = { status: 'signed_in', identity: 'synthetic:session' };
     vi.mocked(globalThis.fetch).mockImplementation((input) => Promise.resolve(new Response(JSON.stringify(
-      (typeof input === 'string' ? input : input instanceof URL ? input.href : input.url).endsWith('/me')
+      requestUrl(input).endsWith('/me')
         ? { user: { id: userId }, memberships: [{ tenantId, membershipId }], tenantSelection: { mode: 'automatic', tenantId } }
         : { context: { tenantId, membershipId, userId, workshop: { displayName: 'Taller de ejemplo', timezone: 'America/Bogota', currency: 'COP' }, roles: ['owner'], permissions: [{ code: 'dashboard.operational.read', scopes: ['tenant'] }] } },
     ), { status: 200, headers: { 'Content-Type': 'application/json' } })));
@@ -174,6 +197,61 @@ describe('S3-UI-01: rutas públicas y frontera de sesión', () => {
     expect(window.location.pathname).toBe('/panel');
     expect(screen.queryByText('Panel de inicio de sesión de Clerk')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Clientes' })).toBeNull();
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => requestUrl(input).endsWith('/me'))).toHaveLength(1);
+    expect(vi.mocked(globalThis.fetch).mock.calls.filter(([input]) => requestUrl(input).endsWith('/me/context'))).toHaveLength(1);
+    expect(session.mountClerk).toHaveBeenCalledTimes(1);
+    expect(session.unmountClerk).not.toHaveBeenCalled();
+  });
+
+
+  it('seleccionar taller B en /login conserva G5 al navegar al panel sin reiniciar selección', async () => {
+    const tenantB = '44444444-4444-4444-8444-444444444444';
+    const membershipB = '55555555-5555-4555-8555-555555555555';
+    session.snapshot = { status: 'signed_in', identity: 'synthetic:session' };
+    const storage = vi.spyOn(Storage.prototype, 'setItem');
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockImplementation((input, init) => {
+      const url = requestUrl(input);
+      if (url.endsWith('/me')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          user: { id: userId },
+          memberships: [{ tenantId, membershipId }, { tenantId: tenantB, membershipId: membershipB }],
+          tenantSelection: { mode: 'required', tenantId: null },
+        }), { status: 200 }));
+      }
+      if (!url.endsWith('/me/context')) throw new Error('unexpected request');
+      const selectedTenant = new Headers(init?.headers).get('X-Tenant-Id');
+      if (selectedTenant !== tenantId && selectedTenant !== tenantB) throw new Error('unexpected tenant');
+      return Promise.resolve(new Response(JSON.stringify({
+        context: {
+          tenantId: selectedTenant,
+          membershipId: selectedTenant === tenantB ? membershipB : membershipId,
+          userId,
+          workshop: { displayName: selectedTenant === tenantB ? 'Taller Beta' : 'Taller Alfa', timezone: 'America/Bogota', currency: 'COP' },
+          roles: ['owner'],
+          permissions: [{ code: 'dashboard.operational.read', scopes: ['tenant'] }],
+        },
+      }), { status: 200 }));
+    });
+
+    mount('/login');
+    expect(await screen.findByRole('heading', { name: 'Selecciona un taller' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Taller Alfa' })).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Taller Beta' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Panel' })).toBeDefined();
+    expect(window.location.pathname).toBe('/panel');
+    expect(screen.queryByRole('heading', { name: 'Selecciona un taller' })).toBeNull();
+    expect(screen.getByText('Taller Beta')).toBeDefined();
+    expect(screen.queryByText('Taller Alfa')).toBeNull();
+    // G5 hace un bootstrap para descubrir los nombres y otro para validar la selección.
+    // La navegación al panel no debe iniciar un tercero ni desmontar el proveedor.
+    expect(fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith('/me'))).toHaveLength(2);
+    const contextRequests = fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith('/me/context'));
+    expect(contextRequests.map(([, init]) => new Headers(init?.headers).get('X-Tenant-Id'))).toEqual([tenantId, tenantB, tenantB]);
+    expect(session.mountClerk).toHaveBeenCalledTimes(1);
+    expect(session.unmountClerk).not.toHaveBeenCalled();
+    expect(storage).not.toHaveBeenCalled();
   });
 
   it('la sesión sin membership conserva el estado sin acceso, sin crear un taller implícito', async () => {

@@ -721,9 +721,10 @@ dd {
 /* Clerk permanece en su adaptador; el layout conserva los estados G1–G5. */
 .public-login { min-height: 100dvh; display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); }
 .public-login-brand { color: #fff; background: var(--public-blue); padding: 44px clamp(32px, 5vw, 76px) 32px; display: flex; flex-direction: column; min-height: 100dvh; }
+.public-login-brand :focus-visible { outline-color: #fff; }
 .public-login-brand .public-brand-mark, .public-login-brand .public-brand-accent { color: #fff; }
 .public-login-story { margin-block: auto; padding-block: 70px; max-width: 420px; }
-.public-login-story .public-eyebrow { color: #E5B476; font-size: 10px; }
+.public-login-story .public-eyebrow { color: #fff; font-size: 10px; }
 .public-login-story h2 { margin-top: 22px; font-size: clamp(36px, 3.4vw, 48px); line-height: 1.15; }
 .public-login-story > p:not(.public-eyebrow) { color: #DDE8FC; margin-top: 24px; font-size: 16px; max-width: 340px; }
 .public-login-story ul { list-style: none; padding: 0; margin: 38px 0 0; display: grid; gap: 26px; }
