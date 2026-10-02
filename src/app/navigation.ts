@@ -46,6 +46,9 @@ export interface NavigationSection {
 
 /** Destino de entrada al espacio autenticado. */
 export const DASHBOARD_PATH = '/panel';
+/** Rutas reales de Recepciones (las registra `AppRoutes`); el Dashboard sólo enlaza a estas. */
+export const RECEPTIONS_PATH = '/recepciones';
+export const NEW_RECEPTION_PATH = '/recepciones/nueva';
 
 export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
   {
@@ -68,7 +71,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
       },
       {
         id: 'recepciones',
-        path: '/recepciones',
+        path: RECEPTIONS_PATH,
         label: 'Recepciones',
         summary: 'Ingreso del vehículo al taller y creación de la orden de trabajo.',
         capabilities: [
