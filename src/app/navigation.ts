@@ -44,7 +44,7 @@ export interface NavigationSection {
   readonly items: readonly NavigationItem[];
 }
 
-/** Sección de inicio. La raíz `/` redirige aquí. */
+/** Destino de entrada al espacio autenticado. */
 export const DASHBOARD_PATH = '/panel';
 
 export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [

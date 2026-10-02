@@ -1,5 +1,9 @@
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+
 import { ConfigIssuesPanel } from '@/features/auth/auth-gate';
 import { AuthProvider } from '@/features/auth/auth-provider';
+import { LandingPage } from '@/features/public/landing-page';
+import { LoginLayout } from '@/features/public/login-layout';
 import type { PublicEnvResult } from '@/shared/config/public-env';
 
 import { AuthenticatedRoot } from './authenticated-root';
@@ -8,24 +12,26 @@ export interface AppProps {
   readonly envResult: PublicEnvResult;
 }
 
-/**
- * Composición raíz. Con configuración pública inválida se muestra el panel de configuración y no
- * se monta nada más; con configuración válida, `AuthProvider` abre la sesión y `AuthenticatedRoot`
- * decide entre la aplicación autenticada (shell + rutas) y las pantallas del `AuthGate`.
- */
-export function App({ envResult }: AppProps) {
+function SessionArea({ envResult, isLogin = false }: AppProps & { readonly isLogin?: boolean }) {
   if (!envResult.ok) {
-    return (
-      <main className="app">
-        <h1>TallerMecario</h1>
-        <ConfigIssuesPanel issues={envResult.issues} />
-      </main>
-    );
+    return <div className="app"><h2>TallerMecario</h2><ConfigIssuesPanel issues={envResult.issues} /></div>;
   }
+  return <AuthProvider env={envResult.env}><AuthenticatedRoot isLogin={isLogin} /></AuthProvider>;
+}
 
+/** La landing se renderiza sin Clerk ni contexto; la frontera autenticada conserva G1–G5. */
+export function App({ envResult }: AppProps) {
   return (
-    <AuthProvider env={envResult.env}>
-      <AuthenticatedRoot />
-    </AuthProvider>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={<LoginLayout><SessionArea envResult={envResult} isLogin /></LoginLayout>} />
+        <Route path="*" element={
+          envResult.ok
+            ? <SessionArea envResult={envResult} />
+            : <main className="app"><h1>TallerMecario</h1><ConfigIssuesPanel issues={envResult.issues} /></main>
+        } />
+      </Routes>
+    </BrowserRouter>
   );
 }

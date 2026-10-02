@@ -94,5 +94,18 @@ function PortBridge({ children }: { readonly children: ReactNode }) {
 
 /** Inicio de sesión embebido. Usa el routing por hash por defecto del SDK (sin router de app). */
 export function ClerkSignInPanel() {
-  return <SignIn />;
+  return <SignIn fallbackRedirectUrl="/panel" appearance={{
+    variables: {
+      colorPrimary: '#0D4FB8',
+      colorForeground: '#202938',
+      colorBackground: '#FFFFFF',
+      borderRadius: '0.5rem',
+      fontFamily: '"Segoe UI", system-ui, sans-serif',
+    },
+    elements: {
+      rootBox: 'public-clerk-root',
+      cardBox: 'public-clerk-card-box',
+      card: 'public-clerk-card',
+    },
+  }} />;
 }
