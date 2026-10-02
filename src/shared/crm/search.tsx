@@ -1,0 +1,6 @@
+import type { CustomerSearch, CustomerSearchFilter } from './customer-selection';
+export const EMPTY_CUSTOMER_SEARCH: CustomerSearch = { field: 'name', value: '' };
+export function CustomerSearchFields({ search, onChange, prefix = 'customer-search' }: { readonly search: CustomerSearch; readonly onChange: (search: CustomerSearch) => void; readonly prefix?: string }) {
+  return <><div className="crm-field"><label htmlFor={`${prefix}-field`}>Buscar por</label><select id={`${prefix}-field`} value={search.field} onChange={e => { const field = e.target.value; if (['name', 'phone', 'documentNumber'].includes(field)) onChange({ field: field as CustomerSearchFilter, value: search.value }); }}><option value="name">Nombre</option><option value="phone">Teléfono</option><option value="documentNumber">Documento</option></select></div>
+    <div className="crm-field crm-search-value"><label htmlFor={`${prefix}-value`}>{search.field === 'name' ? 'Nombre del cliente' : search.field === 'phone' ? 'Teléfono del cliente' : 'Documento del cliente'}</label><input id={`${prefix}-value`} type={search.field === 'phone' ? 'tel' : 'text'} value={search.value} onChange={e => { onChange({ ...search, value: e.target.value }); }} /></div></>;
+}

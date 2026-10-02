@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderWithAuth, signedInSnapshot } from '@/test/render-with-auth';
 
+import { createApiClient } from '@/shared/api/http-client';
+import { IDS, jsonResponse } from '@/test/render-reception';
 import { AppRoutes } from './app-routes';
 import { NAVIGATION_ITEMS } from './navigation';
 import type { ShellContextStatus } from './shell-status';
@@ -18,6 +20,7 @@ function renderRoutes(options: RenderRoutesOptions) {
   return renderWithAuth(
     <MemoryRouter initialEntries={[...options.initialEntries]}>
       <AppRoutes
+        receptionRuntime={{ apiClient: createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'test' }), fetchImpl: url => Promise.resolve(jsonResponse(url.includes('customers') ? { customers: [], nextCursor: null } : url.includes('vehicles') ? { vehicles: [], nextCursor: null } : { receptions: [], nextCursor: null })) }), identity: 'test', tenantId: IDS.tenant, permissions: NAVIGATION_ITEMS.flatMap(item => item.requiredPermission === null ? [] : [{ code: item.requiredPermission, scopes: ['tenant'] }]) }}
         grantedPermissions={new Set(NAVIGATION_ITEMS.flatMap((item) => item.requiredPermission === null ? [] : [item.requiredPermission]))}
         shellStatus={options.shellStatus ?? 'context_pending'}
         onSignOut={options.onSignOut ?? (() => undefined)}
@@ -157,5 +160,5 @@ it('deniega rutas directas y enlaces cuando falta el permiso efectivo', () => {
   render(<MemoryRouter initialEntries={['/clientes']}><AppRoutes shellStatus="context_ready" onSignOut={() => undefined} grantedPermissions={new Set(['vehicles.read'])} /></MemoryRouter>);
   expect(screen.getByRole('alert').textContent).toContain('No tienes permiso');
   expect(screen.queryByRole('link', { name: 'Clientes' })).toBeNull();
-  expect(screen.getByRole('link', { name: 'Vehículos' })).toBeDefined();
+  expect(screen.queryByRole('link', { name: 'Vehículos' })).toBeNull();
 });

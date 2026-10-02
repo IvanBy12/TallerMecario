@@ -7,14 +7,18 @@ import { ReceptionsListPage } from '@/features/reception/receptions-list-page';
 import { ReceptionDetailPage } from '@/features/reception/reception-detail-page';
 import { NewReceptionPage } from '@/features/reception/new-reception-page';
 
+import { CrmProvider } from '@/shared/crm/workspace';
+import { Forbidden } from '@/shared/crm/copy';
+import { can } from '@/shared/auth/effective-permissions';
+import { CRM_ROUTES } from './crm-routes';
 import { ModulePlaceholderPage } from './module-placeholder-page';
 import { DASHBOARD_PATH, NAVIGATION_ITEMS, NEW_RECEPTION_PATH, RECEPTIONS_PATH, isItemVisible, type GrantedPermissions } from './navigation';
 import { NotFoundPage } from './not-found-page';
 import { AppShell } from './shell/app-shell';
 import type { ShellContextStatus } from './shell-status';
 
-/** Únicos destinos con pantalla real hoy; Clientes y Vehículos siguen siendo placeholders. */
-const DASHBOARD_ROUTES: DashboardRoutes = { newReception: NEW_RECEPTION_PATH, receptions: RECEPTIONS_PATH, customers: null, vehicles: null };
+/** Destinos con pantallas operativas. */
+const DASHBOARD_ROUTES: DashboardRoutes = { newReception: NEW_RECEPTION_PATH, receptions: RECEPTIONS_PATH, customers: '/clientes', vehicles: '/vehiculos' };
 
 export interface AppRoutesProps {
   readonly dashboardDataSource?: DashboardDataSource;
@@ -31,9 +35,14 @@ export interface AppRoutesProps {
  * renderizan dentro de él. Las rutas se derivan de la estructura declarativa de navegación.
  */
 export function AppRoutes({ dashboardDataSource = mockDashboardDataSource, shellStatus, onSignOut, grantedPermissions = null, onChangeWorkshop, workshopName, receptionRuntime }: AppRoutesProps) {
+  const navigationPermissions = new Set(grantedPermissions ?? []);
+  for (const code of ['customers.read', 'vehicles.read']) {
+    if (can(receptionRuntime?.permissions ?? [], code, true)) navigationPermissions.add(code);
+    else navigationPermissions.delete(code);
+  }
   return (
     <Routes>
-      <Route element={<AppShell status={shellStatus} onSignOut={onSignOut} grantedPermissions={grantedPermissions} onChangeWorkshop={onChangeWorkshop} workshopName={workshopName} />}>
+      <Route element={<AppShell status={shellStatus} onSignOut={onSignOut} grantedPermissions={navigationPermissions} onChangeWorkshop={onChangeWorkshop} workshopName={workshopName} />}>
         <Route index element={<Navigate to={DASHBOARD_PATH} replace />} />
         <Route path={DASHBOARD_PATH} element={<DashboardPage workshopName={workshopName} context={receptionRuntime} dataSource={dashboardDataSource} routes={DASHBOARD_ROUTES} />} />
         <Route element={receptionRuntime === undefined ? <section><h1>Recepciones</h1><p role="status">Selecciona un taller para consultar recepciones.</p></section> : <ReceptionProvider key={`${receptionRuntime.identity}:${receptionRuntime.tenantId}:${JSON.stringify(receptionRuntime.permissions)}`} runtime={receptionRuntime}><Outlet /></ReceptionProvider>}>
@@ -41,7 +50,8 @@ export function AppRoutes({ dashboardDataSource = mockDashboardDataSource, shell
           <Route path={NEW_RECEPTION_PATH} element={<NewReceptionPage />} />
           <Route path="/recepciones/:receptionId" element={<ReceptionDetailPage />} />
         </Route>
-        {NAVIGATION_ITEMS.filter((item) => item.id !== 'recepciones' && item.id !== 'panel').map((item) => (
+        <Route element={receptionRuntime === undefined ? <section><h1>CRM</h1><Forbidden /></section> : <CrmProvider key={`${receptionRuntime.identity}:${receptionRuntime.tenantId}:${JSON.stringify(receptionRuntime.permissions)}`} runtime={receptionRuntime}><Outlet /></CrmProvider>}>{CRM_ROUTES}</Route>
+        {NAVIGATION_ITEMS.filter((item) => !['recepciones', 'panel', 'clientes', 'vehiculos'].includes(item.id)).map((item) => (
           <Route
             key={item.id}
             path={item.path}
