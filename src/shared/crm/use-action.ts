@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ApiFailure } from '@/shared/api/api-failure';
 import type { ApiResult } from '@/shared/api/http-client';
 export function useCrmAction(signal: AbortSignal) {
@@ -10,7 +10,25 @@ export function useCrmAction(signal: AbortSignal) {
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [retryAt, setRetryAt] = useState(0);
   const [, tick] = useState(0);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; active.current = false; generation.current += 1; }; }, []);
+  useLayoutEffect(() => {
+    const invalidate = () => {
+      generation.current += 1;
+      active.current = false;
+      retryUntil.current = 0;
+      setBusy(false);
+      setFailure(null);
+      setRetryAt(0);
+    };
+    mounted.current = true;
+    invalidate();
+    signal.addEventListener('abort', invalidate);
+    return () => {
+      signal.removeEventListener('abort', invalidate);
+      mounted.current = false;
+      active.current = false;
+      generation.current += 1;
+    };
+  }, [signal]);
   useEffect(() => {
     if (retryAt <= Date.now()) return;
     const timer = setTimeout(() => { tick(v => v + 1); }, Math.min(retryAt - Date.now(), 2147483647));

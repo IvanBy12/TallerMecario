@@ -50,7 +50,7 @@ export function AppRoutes({ dashboardDataSource = mockDashboardDataSource, shell
           <Route path={NEW_RECEPTION_PATH} element={<NewReceptionPage />} />
           <Route path="/recepciones/:receptionId" element={<ReceptionDetailPage />} />
         </Route>
-        <Route element={receptionRuntime === undefined ? <section><h1>CRM</h1><Forbidden /></section> : <CrmProvider key={`${receptionRuntime.identity}:${receptionRuntime.tenantId}:${JSON.stringify(receptionRuntime.permissions)}`} runtime={receptionRuntime}><Outlet /></CrmProvider>}>{CRM_ROUTES}</Route>
+        <Route element={receptionRuntime === undefined ? <section><h1>CRM</h1><Forbidden /></section> : <CrmProvider runtime={receptionRuntime}><Outlet /></CrmProvider>}>{CRM_ROUTES}</Route>
         {NAVIGATION_ITEMS.filter((item) => !['recepciones', 'panel', 'clientes', 'vehiculos'].includes(item.id)).map((item) => (
           <Route
             key={item.id}

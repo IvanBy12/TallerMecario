@@ -46,7 +46,7 @@ export function CrmEditor<T extends EditableRecord>({ title, fields, allowed, si
     if (Object.keys(nextErrors).length) { document.getElementById(`crm-${Object.keys(nextErrors)[0] ?? ''}`)?.focus(); return; }
     if (!selectionReady) { setNotice('Selecciona un cliente propietario antes de guardar.'); return; }
     const body = formBody(fields, values);
-    const payload = baseline === null ? { ...body, ...createExtra } : modifiedBody(body, formBody(fields, valuesOf(fields, baseline)), edited, baseline.updatedAt);
+    const payload = baseline === null ? { ...body, ...createExtra } : modifiedBody(body, edited, baseline.updatedAt);
     if (baseline !== null && Object.keys(payload).length === 1) { setNotice('No hay cambios para guardar.'); return; }
     void run(() => save(payload), data => { void navigate(detailTo(data)); }, async failure => {
       if (failure.code === 'RESOURCE_VERSION_CONFLICT') { setConflict(true); setRecovered(false); await refresh(); }

@@ -1,6 +1,7 @@
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from 'react';
 import type { ApiClient } from '@/shared/api/http-client';
 import type { EffectivePermissions } from '@/shared/auth/effective-permissions';
+
 export interface WorkspaceRuntime {
   readonly apiClient: ApiClient;
   readonly identity: string;
@@ -9,16 +10,47 @@ export interface WorkspaceRuntime {
 }
 interface Workspace extends WorkspaceRuntime { readonly signal: AbortSignal }
 const Context = createContext<Workspace | null>(null);
-export function CrmProvider({ runtime, children }: { readonly runtime: WorkspaceRuntime; readonly children: ReactNode }) {
+
+/** Codes and scopes are sets: ordering, duplicate grants and object identity have no authority. */
+function normalizePermissions(permissions: EffectivePermissions): EffectivePermissions {
+  const scopesByCode = new Map<string, Set<string>>();
+  for (const grant of permissions) {
+    const scopes = scopesByCode.get(grant.code) ?? new Set<string>();
+    for (const scope of grant.scopes) scopes.add(scope);
+    scopesByCode.set(grant.code, scopes);
+  }
+  return [...scopesByCode.keys()].sort().map(code => ({
+    code, scopes: [...(scopesByCode.get(code) ?? [])].sort(),
+  }));
+}
+
+export function CrmProvider({ runtime, children }: {
+  readonly runtime: WorkspaceRuntime;
+  readonly children: ReactNode;
+}) {
+  const permissions = normalizePermissions(runtime.permissions);
+  // Serialize only normalized content; equivalent refreshes preserve the entire CRM subtree.
+  const contextKey = JSON.stringify([runtime.identity, runtime.tenantId, permissions]);
+  return <CrmSession key={contextKey} runtime={runtime} permissions={permissions}>{children}</CrmSession>;
+}
+
+function CrmSession({ runtime, permissions, children }: {
+  readonly runtime: WorkspaceRuntime;
+  readonly permissions: EffectivePermissions;
+  readonly children: ReactNode;
+}) {
+  // The key changes for actual authorization changes, so this snapshot stays valid for the session.
+  const [effectivePermissions] = useState(permissions);
   const [value, setValue] = useState<Workspace | null>(null);
-  const { apiClient, tenantId, identity, permissions } = runtime;
+  const { apiClient, tenantId, identity } = runtime;
   useLayoutEffect(() => {
     const controller = new AbortController();
-    setValue({ apiClient, tenantId, identity, permissions, signal: controller.signal });
+    setValue({ apiClient, tenantId, identity, permissions: effectivePermissions, signal: controller.signal });
     return () => { controller.abort(); };
-  }, [apiClient, tenantId, identity, permissions]);
+  }, [apiClient, tenantId, identity, effectivePermissions]);
   return value === null ? <p role="status">Preparando CRM…</p> : <Context.Provider value={value}>{children}</Context.Provider>;
 }
+
 export function useWorkspace() {
   const value = useContext(Context);
   if (value === null) throw new Error('CrmProvider requerido');

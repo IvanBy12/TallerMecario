@@ -18,9 +18,10 @@ export function valuesOf(fields: readonly FieldSpec[], data?: object): FormValue
 export function formBody(fields: readonly FieldSpec[], values: FormValues): JsonObject {
   return Object.fromEntries(fields.map(f => { const value = values[f.key]?.trim() ?? ''; return [f.key, value === '' ? null : f.type === 'number' ? Number(value) : value]; }));
 }
-export function modifiedBody(body: JsonObject, baseline: JsonObject, edited: ReadonlySet<string>, expectedUpdatedAt: string): JsonObject {
+export function modifiedBody(body: JsonObject, edited: ReadonlySet<string>, expectedUpdatedAt: string): JsonObject {
   const patch: Record<string, JsonValue> = { expectedUpdatedAt };
-  for (const key of edited) { if (body[key] !== baseline[key] && body[key] !== undefined) patch[key] = body[key]; }
+  // Touched fields carry explicit intent, even after A → B → A.
+  for (const key of edited) { if (body[key] !== undefined) patch[key] = body[key]; }
   return patch;
 }
 export function requiredErrors(fields: readonly FieldSpec[], values: FormValues): Record<string, string> {
