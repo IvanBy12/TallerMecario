@@ -1,7 +1,9 @@
 import { classifyFailure } from '@/shared/api/api-failure';
 import type { ApiClient, ApiResult, GetRequest, JsonObject, QueryParams } from '@/shared/api/http-client';
-import { id, parseConsent, parseConsents, parseCustomers, parseNotice, parseOwners, parseReception, parseReceptionDetail, parseReceptions, parseVehicles } from './reception-contract';
+import { id, parseConsent, parseConsents, parseCustomers, parseNotice, parseOwners, parseReception, parseReceptionDetail, parseReceptions, parseVehicles, record } from './reception-contract';
 import { validReceptionBody } from './reception-create-form';
+import { RECEPTION_ACCEPTANCE } from './reception-acceptance';
+import { parseActiveMedia, parseAttachedSignature, parseClosedReception, parseUploadSession } from './reception-workflow-contract';
 export interface ReceptionFilters {
     readonly status?: 'open' | 'closed';
     readonly vehicleId?: string;
@@ -17,7 +19,12 @@ export function createReceptionApi(client: ApiClient, tenantId: string, signal: 
     }
     function validIds(...values: readonly (string | undefined)[]) { return values.every((v) => v === undefined || id(v) !== null); }
     function bad<T>(): Promise<ApiResult<T>> { return Promise.resolve({ ok: false, failure: classifyFailure({ source: 'client', reason: 'client_bug' }) }); }
+    const context = (local?: AbortSignal) => ({ ...base, signal: local === undefined ? signal : AbortSignal.any([signal, local]) });
     return {
+        createSignatureUpload: (size: number, key: string, local: AbortSignal) => client.postJson({ ...context(local), path: '/api/v1/media/upload-sessions', body: { mediaType: 'signature', mimeType: 'image/png', retentionClass: 'authorization_evidence', idempotencyKey: key, expectedSizeBytes: size } }, parseUploadSession),
+        completeSignatureUpload: (sessionId: string, mediaId: string, local: AbortSignal) => !validIds(sessionId, mediaId) ? bad<NonNullable<ReturnType<typeof parseActiveMedia>>>() : client.postJson({ ...context(local), path: `/api/v1/media/upload-sessions/${sessionId}/complete`, body: {} }, value => { const data = parseActiveMedia(value); return data?.mediaAssetId === mediaId ? data : null; }),
+        attachSignature: (receptionId: string, mediaId: string, name: string, document: string | null, local: AbortSignal) => !validIds(receptionId, mediaId) || !name.trim() || name.length > 200 || (document !== null && document.length > 60) ? bad<NonNullable<ReturnType<typeof parseAttachedSignature>>>() : client.postJson({ ...context(local), path: `/api/v1/receptions/${receptionId}/signature`, body: { signatureMediaId: mediaId, signedByName: name, signedByDocument: document, documentVersion: RECEPTION_ACCEPTANCE.documentVersion } }, value => { const data = record(value) ? parseAttachedSignature(value['signature']) : null; return data?.receptionId === receptionId && data.signatureMediaId === mediaId && data.documentVersion === RECEPTION_ACCEPTANCE.documentVersion ? data : null; }),
+        close: (receptionId: string, local: AbortSignal) => !validIds(receptionId) ? bad<NonNullable<ReturnType<typeof parseClosedReception>>>() : client.postCommand({ ...context(local), path: `/api/v1/receptions/${receptionId}/close` }, value => { const data = parseClosedReception(value); return data?.reception.id === receptionId ? data : null; }),
         list: (filters: ReceptionFilters = {}, cursor?: string) => !validIds(filters.vehicleId, filters.customerId) || (filters.status !== undefined && !['open', 'closed'].includes(filters.status)) || (cursor !== undefined && !cursor)
             ? bad<NonNullable<ReturnType<typeof parseReceptions>>>()
             : get('/api/v1/receptions', parseReceptions, { limit: 25, cursor, status: filters.status, vehicleId: filters.vehicleId, customerId: filters.customerId }),

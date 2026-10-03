@@ -1071,3 +1071,22 @@ a.dash-action:hover { background: var(--dash-soft); border-color: var(--dash-blu
   .shell__brand-tagline { overflow-wrap:anywhere; }
   .shell__header-actions { flex:0 0 100%; justify-content:flex-end; }
 }
+
+.reception-workflow { display: grid; gap: var(--tm-space-4); min-width: 0; }
+.reception-evidence { padding: var(--tm-space-4); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); min-width: 0; overflow-wrap: anywhere; }
+.reception-evidence form, .reception-evidence fieldset { display: grid; gap: var(--tm-space-4); min-width: 0; }
+.reception-evidence fieldset { margin: 0; padding: 0; border: 0; }
+.reception-page .reception-check { display: flex; align-items: center; min-height: 44px; }
+.reception-acceptance { line-height: 1.7; }
+.reception-pad { min-width: 0; }
+.reception-pad canvas { display: block; width: 100%; height: 220px; max-width: 720px; background: #fff; border: 1px solid var(--tm-border-strong); border-radius: var(--tm-radius-sm); touch-action: none; }
+.reception-close-dialog { box-sizing: border-box; width: min(32rem, calc(100% - 2rem)); max-height: calc(100% - 2rem); overflow: auto; padding: var(--tm-space-4); background: var(--tm-surface); color: var(--tm-text); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); }
+.reception-close-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.reception-actions { display: flex; flex-wrap: wrap; gap: var(--tm-space-2); }
+.reception-evidence dd { margin-inline-start: 0; overflow-wrap: anywhere; }
+
+.reception-detail :where(h1, h2, h3, p, dl) { margin: 0; }
+.reception-evidence > h2 { margin-bottom: var(--tm-space-4); }
+.reception-evidence dl { display: grid; gap: var(--tm-space-2); }
+.reception-close-dialog h2 { margin-bottom: var(--tm-space-4); }
+.reception-close-dialog .reception-actions { margin-top: var(--tm-space-4); }

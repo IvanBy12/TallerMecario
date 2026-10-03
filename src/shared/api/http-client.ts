@@ -54,6 +54,7 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; failure: ApiFail
 
 export interface ApiClient {
   getJson: <T>(request: GetRequest, parse: (body: unknown) => T | null) => Promise<ApiResult<T>>;
+  postCommand: <T>(request: GetRequest, parse: (body: unknown) => T | null) => Promise<ApiResult<T>>;
   postJson: <T>(request: JsonRequest, parse: (body: unknown) => T | null) => Promise<ApiResult<T>>;
   patchJson: <T>(request: JsonRequest, parse: (body: unknown) => T | null) => Promise<ApiResult<T>>;
 }
@@ -115,7 +116,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         try {
           response = await doFetch(target.url, {
             method,
-            headers: buildHeaders(tokenOutcome.token, target.tenantId, method !== 'GET'),
+            headers: buildHeaders(tokenOutcome.token, target.tenantId, bodyJson !== undefined),
             ...(bodyJson === undefined ? {} : { body: bodyJson }),
             credentials: 'omit',
             cache: 'no-store',
@@ -162,6 +163,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   }
   return {
     getJson: (request, parse) => send('GET', request, parse),
+    postCommand: (request, parse) => send('POST', request, parse),
     postJson: (request, parse) => send('POST', request, parse, request),
     patchJson: (request, parse) => send('PATCH', request, parse, request),
   };
