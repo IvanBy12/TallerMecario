@@ -2,7 +2,7 @@ import { createContext, useContext, useLayoutEffect, useState, type ReactNode } 
 import type { ApiClient } from '@/shared/api/http-client';
 import { createReceptionApi, type ReceptionApi } from './reception-api';
 export { can, type EffectivePermissions } from '@/shared/auth/effective-permissions';
-import type { EffectivePermissions } from '@/shared/auth/effective-permissions';
+import { normalizePermissions, type EffectivePermissions } from '@/shared/auth/effective-permissions';
 export interface ReceptionRuntime {
     readonly apiClient: ApiClient;
     readonly identity: string;
@@ -19,13 +19,22 @@ export function ReceptionProvider({ runtime, children }: {
     readonly runtime: ReceptionRuntime;
     readonly children: ReactNode;
 }) {
+    const permissions = normalizePermissions(runtime.permissions);
+    const contextKey = JSON.stringify([runtime.identity, runtime.tenantId, permissions]);
+    return <ReceptionSession key={contextKey} runtime={runtime} permissions={permissions}>{children}</ReceptionSession>;
+}
+function ReceptionSession({ runtime, permissions, children }: {
+    readonly runtime: ReceptionRuntime; readonly permissions: EffectivePermissions; readonly children: ReactNode;
+}) {
+    // A semantic authorization change remounts this session; equivalent refreshes keep its snapshot.
+    const [effectivePermissions] = useState(permissions);
     const [value, setValue] = useState<Value | null>(null);
-    const { apiClient, tenantId, permissions, identity } = runtime;
+    const { apiClient, tenantId, identity } = runtime;
     useLayoutEffect(() => {
         const controller = new AbortController();
-        setValue({ api: createReceptionApi(apiClient, tenantId, controller.signal), permissions, signal: controller.signal });
+        setValue({ api: createReceptionApi(apiClient, tenantId, controller.signal), permissions: effectivePermissions, signal: controller.signal });
         return () => { controller.abort(); };
-    }, [apiClient, tenantId, permissions, identity]);
+    }, [apiClient, tenantId, effectivePermissions, identity]);
     return value === null ? <p role="status">Preparando recepción…</p> : <ReceptionContext.Provider value={value}>{children}</ReceptionContext.Provider>;
 }
 export function useReception() {

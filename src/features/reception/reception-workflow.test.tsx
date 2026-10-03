@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient, type FetchResponse } from '@/shared/api/http-client';
 import { DETAIL, TECH, SUMMARY, IDS, TIME, PERMISSIONS, jsonResponse, errorResponse, renderReception, type Call } from '@/test/render-reception';
+import { normalizePermissions } from '@/shared/auth/effective-permissions';
 import { createReceptionApi } from './reception-api';
 import { RECEPTION_ACCEPTANCE } from './reception-acceptance';
 import { putSignature } from './reception-media-upload';
@@ -15,7 +16,7 @@ const ORDER = { id: IDS.other, receptionId: IDS.reception, vehicleId: IDS.vehicl
 const CLOSED = { reception: { id: IDS.reception, status: 'closed', closedAt: TIME, updatedAt: TIME }, serviceOrder: ORDER };
 const SIGNED = { ...DETAIL, signature: SIGNATURE };
 const FINAL = { ...SIGNED, status: 'closed', closedAt: TIME, serviceOrder: { id: ORDER.id, orderNumber: ORDER.orderNumber, status: ORDER.status } };
-const UPLOAD = { uploadSessionId: SESSION, mediaAssetId: MEDIA, status: 'pending' as const, uploadUrl: 'https://storage.example.test/signature?presigned=opaque', uploadMethod: 'PUT' as const, uploadHeaders: { 'Content-Type': 'image/png', 'x-amz-meta-test': 'opaque' }, objectKey: 'internal', expiresAt: TIME };
+const UPLOAD = { uploadSessionId: SESSION, mediaAssetId: MEDIA, status: 'pending' as const, uploadUrl: 'https://storage.example.test/signature?presigned=opaque', uploadMethod: 'PUT' as const, uploadHeaders: { 'Content-Type': 'image/png', 'x-amz-meta-test': 'opaque', 'If-None-Match': '*' }, objectKey: 'internal', expiresAt: TIME };
 const BLOB = new Blob(['synthetic ink'], { type: 'image/png' });
 const ACTIVE = { mediaAssetId: MEDIA, status: 'active', sizeBytes: BLOB.size, checksumSha256: null };
 const permissions = [...PERMISSIONS, ...['signatures.capture', 'media.upload', 'receptions.close'].map(code => ({ code, scopes: ['tenant'] }))];
@@ -27,6 +28,7 @@ const originalClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototyp
 const originalDialog = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
 const uuidMatcher: unknown = expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
 const signalMatcher: unknown = expect.any(AbortSignal);
+let clearCanvas = vi.fn();
 let pngExport = vi.fn<(callback: BlobCallback, type?: string) => void>();
 let current: typeof DETAIL | typeof SIGNED | typeof FINAL;
 let storage = vi.fn<(url: string, init: RequestInit) => Promise<FetchResponse>>();
@@ -34,7 +36,7 @@ function defaults(call: Call): FetchResponse {
     if (call.init.method === 'GET') return jsonResponse({ reception: current });
     if (call.url.pathname.endsWith('/complete')) return jsonResponse(ACTIVE);
     if (call.url.pathname.endsWith('/upload-sessions')) return jsonResponse(UPLOAD);
-    if (call.url.pathname.endsWith('/signature')) { current = SIGNED; return jsonResponse(ATTACHED); }
+    if (call.url.pathname.endsWith('/signature')) { current = SIGNED; return jsonResponse({ signature: ATTACHED }, 201); }
     if (call.url.pathname.endsWith('/close')) { current = FINAL; return jsonResponse(CLOSED); }
     return jsonResponse(null);
 }
@@ -45,7 +47,8 @@ beforeEach(() => {
     Object.defineProperty(HTMLCanvasElement.prototype, 'setPointerCapture', { configurable: true, value: vi.fn() });
 
     // The adapter is mocked at the browser boundary; real pointer handlers and export path remain exercised.
-    const context = { clearRect: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(), lineWidth: 1, lineCap: 'round', lineJoin: 'round', strokeStyle: '' };
+    clearCanvas = vi.fn();
+    const context = { clearRect: clearCanvas, beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(), lineWidth: 1, lineCap: 'round', lineJoin: 'round', strokeStyle: '' };
     Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { configurable: true, value: vi.fn(() => context) });
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({ x: 10, y: 20, top: 20, left: 10, bottom: 220, right: 310, width: 300, height: 200, toJSON: () => ({}) });
     pngExport = vi.fn(callback => { callback(BLOB); });
@@ -165,7 +168,8 @@ describe('signature wire and UI', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Reintentar registro de firma' }));
         await screen.findByText('Firma registrada');
         const keys = mutation(h.calls, '/upload-sessions').map(c => body(c));
-        expect(keys[0]).toEqual(keys[1]); expect(storage).toHaveBeenCalledTimes(2);
+        expect(keys).toHaveLength(1); expect(storage).toHaveBeenCalledTimes(2);
+        expect(storage.mock.calls[0]?.[1].body).toBe(BLOB); expect(storage.mock.calls[1]?.[1].body).toBe(BLOB);
     });
     it.each(['UPLOAD_SESSION_EXPIRED', 'UPLOAD_SESSION_FAILED'])('explicit restart after %s creates a new key with the same Blob', async code => {
         let failed = false;
@@ -211,6 +215,13 @@ describe('signature wire and UI', () => {
         const h = renderReception(route, defaults, permissions);
         await prepare(); sign(); await screen.findByText('Subiendo firma…');
         h.updateRuntime({ ...h.runtime, ...(field === 'tenantId' ? { tenantId: IDS.other } : field === 'identity' ? { identity: 'next-session' } : { permissions: PERMISSIONS }) });
+        expect(storage.mock.calls[0]?.[1].signal?.aborted).toBe(true);
+        expect(screen.queryByDisplayValue('Persona de prueba')).toBeNull();
+        if (field === 'permissions') {
+            expect(screen.queryByLabelText('Firma manuscrita de recepción')).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Registrar firma' })).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Cerrar recepción' })).toBeNull();
+        }
         await act(() => { resolve?.(jsonResponse(null)); return Promise.resolve(); });
         expect(storage.mock.calls[0]?.[1].signal?.aborted).toBe(true);
         expect(mutation(h.calls, '/complete')).toHaveLength(0); expect(mutation(h.calls, '/signature')).toHaveLength(0);
@@ -328,7 +339,7 @@ describe('workflow response validation and isolated storage', () => {
         expect(send).toHaveBeenCalledWith(UPLOAD.uploadUrl, expect.objectContaining({ headers: UPLOAD.uploadHeaders, credentials: 'omit' }));
     });
     it('API rejects a mismatched complete media ID and signature target', async () => {
-        const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: url => Promise.resolve(jsonResponse(url.endsWith('/complete') ? { ...ACTIVE, mediaAssetId: IDS.vehicle } : { ...ATTACHED, receptionId: IDS.other })) });
+        const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: url => Promise.resolve(jsonResponse(url.endsWith('/complete') ? { ...ACTIVE, mediaAssetId: IDS.vehicle } : { signature: { ...ATTACHED, receptionId: IDS.other } })) });
         const signal = new AbortController().signal, api = createReceptionApi(client, IDS.tenant, signal);
         expect((await api.completeSignatureUpload(SESSION, MEDIA, signal)).ok).toBe(false);
         expect((await api.attachSignature(IDS.reception, MEDIA, 'Prueba', null, signal)).ok).toBe(false);
@@ -388,7 +399,7 @@ describe('additional recovery and cancellation boundaries', () => {
 });
 
 it('retains a confirmed signature if the following GET temporarily lacks its summary', async () => {
-    const h = renderReception(route, call => call.url.pathname.endsWith('/signature') ? jsonResponse(ATTACHED) : defaults(call), permissions);
+    const h = renderReception(route, call => call.url.pathname.endsWith('/signature') ? jsonResponse({ signature: ATTACHED }, 201) : defaults(call), permissions);
     await prepare(); sign(); await screen.findByText('Firma registrada');
     expect(mutation(h.calls, '/signature')).toHaveLength(1);
     expect(screen.queryByLabelText('Firma manuscrita de recepción')).toBeNull();
@@ -417,4 +428,189 @@ it('signature-required close error refreshes stale evidence and restores the act
     await screen.findByLabelText('Firma manuscrita de recepción');
     expect(screen.queryByRole('button', { name: 'Cerrar recepción' })).toBeNull();
     expect(mutation(h.calls, '/close')).toHaveLength(1);
+});
+
+
+const equivalentPermissions = () => [...permissions].reverse().flatMap(grant => [
+    { code: grant.code, scopes: [...grant.scopes, ...grant.scopes].reverse() },
+    { code: grant.code, scopes: [...grant.scopes] },
+]);
+
+describe('S3-UI-04 signature regression fixes', () => {
+    it.each([false, true])('equivalent grants preserve drawing and all signer fields; StrictMode=%s', async strict => {
+        const h = renderReception(route, defaults, permissions, strict);
+        await prepare('DOC-SINTETICO');
+        const canvas = screen.getByLabelText('Firma manuscrita de recepción');
+        const clears = clearCanvas.mock.calls.length;
+        h.updateRuntime({ ...h.runtime, permissions: equivalentPermissions() });
+        expect(screen.getByLabelText('Firma manuscrita de recepción')).toBe(canvas);
+        expect(screen.getByLabelText('Nombre del firmante *')).toMatchObject({ value: 'Persona de prueba' });
+        expect(screen.getByLabelText('Documento del firmante (opcional)')).toMatchObject({ value: 'DOC-SINTETICO' });
+        expect(screen.getByLabelText('He leído el documento de aceptación mostrado.')).toMatchObject({ checked: true });
+        expect(clearCanvas.mock.calls.length).toBe(clears);
+        expect(screen.getByRole('button', { name: 'Registrar firma' }).hasAttribute('disabled')).toBe(false);
+        sign(); await screen.findByText('Firma registrada');
+        expect(mutation(h.calls, '/signature')).toHaveLength(1);
+    });
+    it('permission normalization merges codes and scopes as sets with stable ordering', () => {
+        const a = [{ code: 'b', scopes: ['tenant', 'assigned', 'tenant'] }, { code: 'a', scopes: ['quality_control'] }, { code: 'b', scopes: ['assigned'] }];
+        const b = [{ code: 'b', scopes: ['assigned'] }, { code: 'b', scopes: ['tenant'] }, { code: 'a', scopes: ['quality_control', 'quality_control'] }];
+        expect(JSON.stringify(normalizePermissions(a))).toBe(JSON.stringify(normalizePermissions(b)));
+        expect(normalizePermissions(a)).toEqual([{ code: 'a', scopes: ['quality_control'] }, { code: 'b', scopes: ['assigned', 'tenant'] }]);
+    });
+    it('equivalent refresh during PUT preserves the session, Blob and pending progress without abort', async () => {
+        let resolve: ((r: FetchResponse) => void) | undefined;
+        storage.mockImplementation(() => new Promise(r => { resolve = r; }));
+        const h = renderReception(route, defaults, permissions);
+        await prepare('DOC-SINTETICO'); sign(); await screen.findByText('Subiendo firma…');
+        const canvas = screen.getByLabelText('Firma manuscrita de recepción');
+        h.updateRuntime({ ...h.runtime, permissions: equivalentPermissions() });
+        expect(storage.mock.calls[0]?.[1].signal?.aborted).toBe(false);
+        expect(screen.getByText('Subiendo firma…')).toBeDefined();
+        expect(screen.getByLabelText('Firma manuscrita de recepción')).toBe(canvas);
+        expect(screen.getByLabelText('Nombre del firmante *')).toMatchObject({ value: 'Persona de prueba' });
+        expect(screen.getByLabelText('Documento del firmante (opcional)')).toMatchObject({ value: 'DOC-SINTETICO' });
+        expect(screen.getByLabelText('He leído el documento de aceptación mostrado.')).toMatchObject({ checked: true });
+        expect(screen.getByRole('button', { name: 'Nueva firma' }).hasAttribute('disabled')).toBe(true);
+        expect(mutation(h.calls, '/upload-sessions')).toHaveLength(1);
+        expect(mutation(h.calls, '/complete')).toHaveLength(0);
+        await act(() => { resolve?.(jsonResponse(null)); return Promise.resolve(); });
+        await screen.findByText('Firma registrada');
+        expect(storage).toHaveBeenCalledTimes(1); expect(storage.mock.calls[0]?.[1].body).toBe(BLOB);
+        expect(mutation(h.calls, '/complete')).toHaveLength(1);
+        expect(mutation(h.calls, '/signature')).toHaveLength(1);
+        expect(pngExport).toHaveBeenCalledTimes(1);
+    });
+    it.each(['REQUEST_VALIDATION_FAILED', 'SIGNATURE_MEDIA_NOT_ELIGIBLE'])('equivalent refresh after active media and attach %s preserves the media for attach retry', async code => {
+        let attaches = 0;
+        const h = renderReception(route, call => call.url.pathname.endsWith('/signature') && ++attaches === 1 ? errorResponse(code, 400) : defaults(call), permissions);
+        await prepare(); sign(); await screen.findByText('request-test');
+        h.updateRuntime({ ...h.runtime, permissions: equivalentPermissions() });
+        expect(screen.queryByRole('button', { name: 'Reiniciar subida' })).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Reintentar registro de firma' }));
+        await screen.findByText('Firma registrada');
+        expect(mutation(h.calls, '/upload-sessions')).toHaveLength(1);
+        expect(mutation(h.calls, '/complete')).toHaveLength(1); expect(storage).toHaveBeenCalledTimes(1);
+        expect(mutation(h.calls, '/signature').map(c => body(c))).toEqual([body(mutation(h.calls, '/signature')[0]), body(mutation(h.calls, '/signature')[0])]);
+    });
+    it('equivalent refresh preserves close confirmation; actual close revocation removes it', async () => {
+        current = SIGNED;
+        const h = renderReception(route, defaults, permissions);
+        const dialog = await confirmation();
+        h.updateRuntime({ ...h.runtime, permissions: equivalentPermissions() });
+        expect(screen.getByRole('dialog')).toBe(dialog);
+        expect(within(dialog).getByRole('button', { name: 'Cerrar recepción' }).hasAttribute('disabled')).toBe(false);
+        h.updateRuntime({ ...h.runtime, permissions: permissions.filter(g => g.code !== 'receptions.close') });
+        await screen.findByText('Firma registrada');
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Cerrar recepción' })).toBeNull();
+        expect(mutation(h.calls, '/close')).toHaveLength(0);
+    });
+    it('contractual 201 confirms and releases evidence before refresh, and failed GET cannot undo it', async () => {
+        let refresh: ((r: FetchResponse) => void) | undefined, lookups = 0;
+        const h = renderReception(route, call => call.init.method === 'GET' && ++lookups > 1 ? new Promise(r => { refresh = r; }) : defaults(call), permissions);
+        await prepare(); sign(); await screen.findByText('Firma registrada');
+        await waitFor(() => { expect(refresh).toBeDefined(); });
+        expect(screen.queryByLabelText('Firma manuscrita de recepción')).toBeNull();
+        expect(screen.queryByDisplayValue('Persona de prueba')).toBeNull();
+        await act(() => { refresh?.(errorResponse('INTERNAL_ERROR', 500)); return Promise.resolve(); });
+        await screen.findByText('La firma está registrada; no se pudo actualizar el detalle de recepción.');
+        await waitFor(() => { expect(screen.getByRole('button', { name: 'Cerrar recepción' }).hasAttribute('disabled')).toBe(false); });
+        expect(screen.getByText('Firma registrada')).toBeDefined();
+        expect(screen.queryByLabelText('Firma manuscrita de recepción')).toBeNull();
+        expect(screen.queryByText(/Firma pendiente/)).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Reintentar registro de firma' })).toBeNull();
+        expect(mutation(h.calls, '/signature')).toHaveLength(1);
+        expect(mutation(h.calls, '/upload-sessions')).toHaveLength(1); expect(storage).toHaveBeenCalledTimes(1);
+    });
+    it('stored S1 with lost PUT response and retry 412 explicitly restarts as S2 with identical evidence', async () => {
+        const second = { ...UPLOAD, uploadSessionId: IDS.vehicle, mediaAssetId: IDS.customer, uploadUrl: 'https://storage.example.test/signature-2?presigned=opaque', objectKey: 'internal-2' };
+        const objects = new Map<string, RequestInit['body']>();
+        storage.mockImplementation((url, init) => {
+            if (objects.has(url)) return Promise.resolve(jsonResponse(null, 412));
+            objects.set(url, init.body);
+            return url === UPLOAD.uploadUrl ? Promise.reject(new Error('response lost after write')) : Promise.resolve(jsonResponse(null, 201));
+        });
+        let sessions = 0;
+        const h = renderReception(route, call => {
+            if (call.url.pathname.endsWith('/upload-sessions')) return jsonResponse(++sessions === 1 ? UPLOAD : second, 201);
+            if (call.url.pathname.endsWith('/complete')) return jsonResponse({ ...ACTIVE, mediaAssetId: second.mediaAssetId });
+            if (call.url.pathname.endsWith('/signature')) { current = SIGNED; return jsonResponse({ signature: { ...ATTACHED, signatureMediaId: second.mediaAssetId } }, 201); }
+            return defaults(call);
+        }, permissions);
+        await prepare('DOC-SINTETICO'); sign(); await screen.findByRole('button', { name: 'Reiniciar subida' });
+        expect(mutation(h.calls, '/upload-sessions')).toHaveLength(1); expect(storage).toHaveBeenCalledTimes(1);
+        expect(mutation(h.calls, '/complete')).toHaveLength(0); expect(mutation(h.calls, '/signature')).toHaveLength(0);
+        fireEvent.click(screen.getByRole('button', { name: 'Reintentar registro de firma' }));
+        await screen.findByText('La subida actual no admite sobrescritura. Reinicia la subida para registrar esta misma firma.');
+        expect(storage).toHaveBeenCalledTimes(2); expect(mutation(h.calls, '/upload-sessions')).toHaveLength(1);
+        expect(mutation(h.calls, '/complete')).toHaveLength(0); expect(mutation(h.calls, '/signature')).toHaveLength(0);
+        expect(screen.getByRole('button', { name: 'Reintentar registro de firma' }).hasAttribute('disabled')).toBe(true);
+        h.updateRuntime({ ...h.runtime, permissions: equivalentPermissions() });
+        expect(screen.getByLabelText('Nombre del firmante *')).toMatchObject({ value: 'Persona de prueba' });
+        expect(screen.getByLabelText('Documento del firmante (opcional)')).toMatchObject({ value: 'DOC-SINTETICO' });
+        expect(screen.getByLabelText('He leído el documento de aceptación mostrado.')).toMatchObject({ checked: true });
+        const restart = screen.getByRole('button', { name: 'Reiniciar subida' });
+        fireEvent.click(restart); fireEvent.click(restart);
+        await screen.findByText('Firma registrada');
+        const sessionCalls = mutation(h.calls, '/upload-sessions');
+        expect(sessionCalls).toHaveLength(2);
+        expect(body(sessionCalls[0])).not.toEqual(body(sessionCalls[1]));
+        expect(body(sessionCalls[0])).toMatchObject({ idempotencyKey: uuidMatcher });
+        expect(body(sessionCalls[1])).toMatchObject({ idempotencyKey: uuidMatcher });
+        expect(objects.get(UPLOAD.uploadUrl)).toBe(BLOB); expect(objects.get(second.uploadUrl)).toBe(BLOB);
+        expect(storage.mock.calls.map(c => c[1].body)).toEqual([BLOB, BLOB, BLOB]);
+        expect(storage).toHaveBeenCalledTimes(3); expect(pngExport).toHaveBeenCalledTimes(1);
+        expect(mutation(h.calls, '/complete')).toHaveLength(1);
+        expect(mutation(h.calls, '/complete')[0]?.url.pathname).toBe('/api/v1/media/upload-sessions/' + second.uploadSessionId + '/complete');
+        expect(mutation(h.calls, '/signature')).toHaveLength(1);
+        expect(body(mutation(h.calls, '/signature')[0])).toEqual({ signatureMediaId: second.mediaAssetId, signedByName: 'Persona de prueba', signedByDocument: 'DOC-SINTETICO', documentVersion: RECEPTION_ACCEPTANCE.documentVersion });
+    });
+    it.each([403, 412, 500])('PUT HTTP %s stops before complete and offers explicit restart with preserved evidence', async status => {
+        storage.mockResolvedValueOnce(jsonResponse(null, status));
+        const h = renderReception(route, defaults, permissions);
+        await prepare(); sign(); await screen.findByRole('button', { name: 'Reiniciar subida' });
+        expect(mutation(h.calls, '/upload-sessions')).toHaveLength(1); expect(storage).toHaveBeenCalledTimes(1);
+        expect(mutation(h.calls, '/complete')).toHaveLength(0); expect(mutation(h.calls, '/signature')).toHaveLength(0);
+        fireEvent.click(screen.getByRole('button', { name: 'Reiniciar subida' }));
+        await screen.findByText('Firma registrada');
+        expect(mutation(h.calls, '/upload-sessions')).toHaveLength(2);
+        expect(storage.mock.calls[1]?.[1].body).toBe(BLOB); expect(pngExport).toHaveBeenCalledTimes(1);
+    });
+    it('classifies storage 412 by HTTP status without reading the body or inventing an API code', async () => {
+        const response = jsonResponse(null, 412);
+        const json = vi.fn(() => response.json());
+        const result = await putSignature(UPLOAD, BLOB, new AbortController().signal, () => Promise.resolve({ ...response, json }));
+        expect(result).toMatchObject({ ok: false, failure: { kind: 'unexpected_status', status: 412, code: null } });
+        expect(json).not.toHaveBeenCalled();
+    });
+    it('accepts only the real signature envelope and validates every required field', async () => {
+        const values: unknown[] = [ATTACHED, null, {}, { signature: null },
+            ...['signatureId', 'receptionId', 'signatureMediaId', 'documentVersion', 'signedAt'].map(field => ({ signature: { ...ATTACHED, [field]: null } })),
+            { signature: { ...ATTACHED, receptionId: IDS.other } }, { signature: { ...ATTACHED, signatureMediaId: IDS.vehicle } },
+            { signature: { ...ATTACHED, documentVersion: 'wrong_version' } }, { signature: { ...ATTACHED, signedAt: 'invalid' } }];
+        for (const value of values) {
+            const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: () => Promise.resolve(jsonResponse(value, 201)) });
+            const signal = new AbortController().signal;
+            expect(await createReceptionApi(client, IDS.tenant, signal).attachSignature(IDS.reception, MEDIA, 'Prueba', null, signal)).toMatchObject({ ok: false, failure: { kind: 'contract_violation' } });
+        }
+        const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: () => Promise.resolve(jsonResponse({ signature: ATTACHED }, 201)) });
+        const signal = new AbortController().signal;
+        expect(await createReceptionApi(client, IDS.tenant, signal).attachSignature(IDS.reception, MEDIA, 'Prueba', null, signal)).toEqual({ ok: true, data: ATTACHED });
+    });
+});
+
+
+it('ambiguous creation of a session retries with the same key and Blob until explicit restart', async () => {
+    let creations = 0;
+    const h = renderReception(route, call => call.url.pathname.endsWith('/upload-sessions') && ++creations === 1 ? Promise.reject(new Error('lost session response')) : defaults(call), permissions);
+    await prepare(); sign(); await screen.findByText(/No hay conexión/);
+    expect(storage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Reiniciar subida' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar registro de firma' }));
+    await screen.findByText('Firma registrada');
+    const sessions = mutation(h.calls, '/upload-sessions');
+    expect(sessions).toHaveLength(2); expect(body(sessions[0])).toEqual(body(sessions[1]));
+    expect(storage).toHaveBeenCalledTimes(1); expect(storage.mock.calls[0]?.[1].body).toBe(BLOB);
+    expect(pngExport).toHaveBeenCalledTimes(1);
 });

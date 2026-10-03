@@ -3,15 +3,16 @@ import { classifyFailure, type ApiFailure } from '@/shared/api/api-failure';
 import type { ApiResult } from '@/shared/api/http-client';
 import { can, useReception } from './reception-context';
 import type { ReceptionDetail } from './reception-contract';
+import type { UploadSession } from './reception-workflow-contract';
 import { RECEPTION_ACCEPTANCE, SIGNATURE_MAX_BYTES } from './reception-acceptance';
 import { ReceptionSignaturePad, type SignaturePadHandle } from './reception-signature-pad';
 import { putSignature } from './reception-media-upload';
 import { RequestReference } from './request-reference';
 import { useReceptionAction } from './use-reception-action';
-type Stage = 'idle' | 'drawing' | 'creating_upload_session' | 'uploading' | 'completing_upload' | 'attaching_signature' | 'success' | 'error';
+type Stage = 'idle' | 'drawing' | 'creating_upload_session' | 'uploading' | 'completing_upload' | 'attaching_signature' | 'success' | 'error' | 'upload_ambiguous';
 interface Attempt {
     blob: Blob; key: string; name: string; document: string | null;
-    sessionId: string | null; mediaId: string | null; uploaded: boolean; active: boolean; reconcile: boolean;
+    session: UploadSession | null; sessionId: string | null; mediaId: string | null; uploaded: boolean; active: boolean; reconcile: boolean;
 }
 const AMBIGUOUS = new Set(['network', 'timeout', 'server_error', 'contract_violation']);
 const RESTART = new Set(['UPLOAD_SESSION_EXPIRED', 'UPLOAD_SESSION_FAILED', 'UPLOAD_SESSION_ALREADY_COMPLETED', 'SIGNATURE_MEDIA_NOT_FOUND', 'SIGNATURE_MEDIA_NOT_ELIGIBLE', 'SIGNATURE_MEDIA_ALREADY_USED']);
@@ -30,6 +31,7 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
     const [name, setName] = useState(''), [document, setDocument] = useState(''), [read, setRead] = useState(false);
     const [hasInk, setHasInk] = useState(false), [validation, setValidation] = useState<string | null>(null);
     const [confirm, setConfirm] = useState(false), [openedAt, setOpenedAt] = useState<string | null>(null);
+    const [refreshFailure, setRefreshFailure] = useState<ApiFailure | null>(null);
     const [closeNeedsReconcile, setCloseNeedsReconcile] = useState(false);
     const [closedHere, setClosedHere] = useState(false);
     const closeButton = useRef<HTMLButtonElement>(null), orderHeading = useRef<HTMLHeadingElement>(null);
@@ -55,10 +57,14 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
         attempt.current = null; pad.current?.clear(); setName(''); setDocument(''); setRead(false); setHasInk(false);
         setStage('success'); setValidation(null);
     };
-    const refresh = async () => {
+    const refresh = async (confirmedSignature?: ReceptionDetail['signature']) => {
         const result = await api.detail(reception.receptionId);
         if (!alive()) return cancel();
-        if (result.ok) onChange(result.data);
+        if (result.ok) {
+            const data = confirmedSignature === undefined ? result.data : { ...result.data, signature: result.data.signature ?? confirmedSignature };
+            onChange(data);
+            return { ok: true, data } as const;
+        }
         return result;
     };
     const signature = (restart = false) => {
@@ -76,7 +82,7 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
                     setValidation('Dibuja una firma PNG de hasta 2 MB.'); return invalid();
                 }
                 attempt.current = { blob, key: crypto.randomUUID(), name: name.trim(), document: document.trim() || null,
-                    sessionId: null, mediaId: null, uploaded: false, active: false, reconcile: false };
+                    session: null, sessionId: null, mediaId: null, uploaded: false, active: false, reconcile: false };
             }
             const current = attempt.current;
             if (current.reconcile) {
@@ -88,19 +94,26 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
                 if (latest.data.status !== 'open') return invalid();
             }
             if (restart) {
-                current.key = crypto.randomUUID(); current.sessionId = null; current.mediaId = null;
+                if (current.active) return invalid();
+                current.key = crypto.randomUUID(); current.session = null; current.sessionId = null; current.mediaId = null;
                 current.uploaded = false; current.active = false;
             }
             if (!current.uploaded) {
-                setStage('creating_upload_session');
-                const session = await api.createSignatureUpload(current.blob.size, current.key, lifetime.current.signal);
-                if (!alive()) return cancel();
-                if (!session.ok) return session;
-                current.sessionId = session.data.uploadSessionId; current.mediaId = session.data.mediaAssetId;
+                if (current.session === null) {
+                    setStage('creating_upload_session');
+                    const session = await api.createSignatureUpload(current.blob.size, current.key, lifetime.current.signal);
+                    if (!alive()) return cancel();
+                    if (!session.ok) return session;
+                    current.session = session.data;
+                    current.sessionId = session.data.uploadSessionId; current.mediaId = session.data.mediaAssetId;
+                }
                 setStage('uploading');
-                const uploaded = await putSignature(session.data, current.blob, AbortSignal.any([signal, lifetime.current.signal]));
+                const uploaded = await putSignature(current.session, current.blob, AbortSignal.any([signal, lifetime.current.signal]));
                 if (!alive()) return cancel();
-                if (!uploaded.ok) return uploaded;
+                if (!uploaded.ok) {
+                    setStage('upload_ambiguous');
+                    return uploaded;
+                }
                 current.uploaded = true;
             }
             if (!current.active) {
@@ -122,8 +135,11 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
             if (attached.ok) {
                 const result = { ...reception, signature: { signatureId: attached.data.signatureId, documentVersion: attached.data.documentVersion, signedAt: attached.data.signedAt } };
                 onChange(result); resetEvidence();
-                const latest = await refresh();
-                return !alive() ? cancel() : latest.ok ? { ok: true, data: { ...latest.data, signature: latest.data.signature ?? result.signature } } : { ok: true, data: result };
+                setRefreshFailure(null);
+                const latest = await refresh(result.signature);
+                if (!alive()) return cancel();
+                if (!latest.ok) setRefreshFailure(latest.failure);
+                return latest.ok ? latest : { ok: true, data: result };
             }
             if (AMBIGUOUS.has(attached.failure.kind) || ['RECEPTION_ALREADY_SIGNED', 'SIGNATURE_MEDIA_ALREADY_USED', 'RECEPTION_NOT_EDITABLE'].includes(attached.failure.code ?? '')) {
                 current.reconcile = true;
@@ -135,7 +151,7 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
                 }
             }
             return attached;
-        }, data => { if (alive()) { onChange(data); resetEvidence(); } }, () => { if (alive()) setStage('error'); return Promise.resolve(); });
+        }, data => { if (alive()) { onChange(data); resetEvidence(); } }, () => { if (alive()) setStage(previous => previous === 'upload_ambiguous' ? previous : 'error'); return Promise.resolve(); });
     };
     const close = () => {
         if (!canClose || blocked || !alive()) return;
@@ -177,6 +193,7 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
         }, data => { if (alive()) { onChange(data); dismissClose(); setClosedHere(true); } });
     };
     const failure: ApiFailure | null = action.failure;
+    const restartable = attempt.current !== null && !attempt.current.active && (stage === 'upload_ambiguous' || RESTART.has(failure?.code ?? ''));
     return <div className="reception-workflow">
         <section className="reception-evidence" aria-labelledby="signature-heading">
             <h2 id="signature-heading">Firma de recepción</h2>
@@ -192,13 +209,15 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
                     <ReceptionSignaturePad ref={pad} disabled={blocked || attempt.current !== null} onDrawing={ink => { setHasInk(ink); if (attempt.current === null) setStage(ink ? 'drawing' : 'idle'); }}/>
                     {validation !== null && <p role="alert">{validation}</p>}
                     {attempt.current === null ? <button className="ui-button" type="submit" disabled={blocked || !name.trim() || !read || !hasInk}>Registrar firma</button> :
-                        <><button className="ui-button" type="button" disabled={blocked || RESTART.has(failure?.code ?? '')} onClick={() => { signature(); }}>Reintentar registro de firma</button>
-                        {RESTART.has(failure?.code ?? '') && <button className="ui-button" type="button" disabled={blocked} onClick={() => { signature(true); }}>Reiniciar subida</button>}
+                        <><button className="ui-button" type="button" disabled={blocked || (restartable && (failure?.status === 412 || RESTART.has(failure?.code ?? '')))} onClick={() => { signature(); }}>Reintentar registro de firma</button>
+                        {restartable && <button className="ui-button" type="button" disabled={blocked} onClick={() => { signature(true); }}>Reiniciar subida</button>}
                         <button className="ui-button" type="button" disabled={blocked} onClick={() => { attempt.current = null; pad.current?.clear(); setStage('idle'); }}>Nueva firma</button></>}
                 </form> : <p>{reception.status === 'open' ? 'Firma pendiente. Se requieren permisos de firma y subida de media en este taller.' : 'Sin firma registrada.'}</p>}
+            {stage === 'upload_ambiguous' && !action.busy && <p role="alert">{failure?.status === 412 ? 'La subida actual no admite sobrescritura. Reinicia la subida para registrar esta misma firma.' : 'No se pudo confirmar la subida. Puedes reiniciar la subida conservando esta misma firma.'}</p>}
             {progress[stage] !== undefined && action.busy && <p role="status" aria-live="polite">{progress[stage]}</p>}
         </section>
         <RequestReference failure={failure} closing/>
+        {refreshFailure !== null && <div><p>La firma está registrada; no se pudo actualizar el detalle de recepción.</p><RequestReference failure={refreshFailure}/></div>}
         {failure?.code === 'RECEPTION_MILEAGE_CONFLICT' && can(permissions, 'receptions.update_open', true) && reception.status === 'open' &&
             <button className="ui-button" type="button" disabled={blocked} onClick={() => { dismissClose(); onEdit(); }}>Volver a edición</button>}
         <section className="reception-evidence" aria-labelledby="close-heading">
