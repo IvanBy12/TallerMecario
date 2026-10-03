@@ -7,6 +7,7 @@ import { EMPTY_FORM, formOf, patchBody, type EditedIntakeFields, type IntakeFiel
 import { ReceptionFields } from './reception-fields';
 import { RequestReference } from './request-reference';
 import { useReceptionAction } from './use-reception-action';
+import { ReceptionWorkflow } from './reception-workflow';
 export function ReceptionDetailPage() {
     const { receptionId = '' } = useParams();
     return <ReceptionDetailContent key={receptionId} receptionId={receptionId}/>;
@@ -20,6 +21,7 @@ function ReceptionDetailContent({ receptionId }: {
     const [editedFields, setEditedFields] = useState<EditedIntakeFields>(() => new Set<IntakeField>());
     const [baseline, setBaseline] = useState<Reception | null>(null);
     const [form, setForm] = useState<IntakeForm>(EMPTY_FORM);
+    const [workflowBusy, setWorkflowBusy] = useState(false);
     const [editing, setEditing] = useState(false);
     const [locked, setLocked] = useState(false);
     const [recoveryFailure, setRecoveryFailure] = useState<ApiFailure | null>(null);
@@ -51,7 +53,7 @@ function ReceptionDetailContent({ receptionId }: {
             setLocked(true);
     };
     const save = () => {
-        if (!editable || baseline === null || conflicted || recoveryFailure !== null)
+        if (workflowBusy || !editable || baseline === null || conflicted || recoveryFailure !== null)
             return;
         const body = patchBody(form, baseline, editedFields);
         if (body === null) {
@@ -73,7 +75,7 @@ function ReceptionDetailContent({ receptionId }: {
             }
         });
     };
-    return <section className="reception-page"><h1>Detalle de recepción</h1><Link to="/recepciones">Volver a recepciones</Link>
+    return <section className="reception-page reception-detail"><h1>Detalle de recepción</h1><Link to="/recepciones">Volver a recepciones</Link>
     {!allowed ? <p role="alert">No tienes permiso para consultar recepciones.</p> : <>
       {busy && <p role="status">Cargando recepción…</p>}<RequestReference failure={failure}/><RequestReference failure={recoveryFailure}/>
       {failure !== null && !editing && <button type="button" disabled={blocked} onClick={() => { void load(); }}>Reintentar</button>}
@@ -81,7 +83,7 @@ function ReceptionDetailContent({ receptionId }: {
         {'customerId' in reception && <><h2>Observaciones del cliente</h2><p className="reception-text">{reception.customerNotes ?? 'Sin observaciones'}</p><h2>Notas del asesor</h2><p className="reception-text">{reception.advisorNotes ?? 'Sin notas'}</p></>}
         <h2>Checklist</h2>{reception.checklist.length === 0 ? <p>Sin elementos registrados.</p> : <ul>{reception.checklist.map((item) => <li key={item.checkItemId}>{item.label}: {({ ok: 'Correcto', issue: 'Novedad', not_checked: 'Sin revisar', not_applicable: 'No aplica' })[item.status]}{item.notes !== null && <p>{item.notes}</p>}</li>)}</ul>}
         <h2>Daños</h2>{reception.damages.length === 0 ? <p>Sin daños registrados.</p> : <ul>{reception.damages.map((d) => <li key={d.damageId}>{d.zoneCode} · {d.damageType} · {({ minor: 'Leve', moderate: 'Moderado', severe: 'Grave' })[d.severity]}{d.description !== null && <p>{d.description}</p>}</li>)}</ul>}
-        {editable && !editing && <button type="button" disabled={blocked} onClick={() => {
+        {editable && !editing && <button type="button" disabled={blocked || workflowBusy} onClick={() => {
                         if ('customerId' in reception) {
                             setBaseline(reception);
                             setEditedFields(new Set<IntakeField>());
@@ -91,6 +93,9 @@ function ReceptionDetailContent({ receptionId }: {
                             setRecoveryFailure(null);
                         }
                     }}>Editar recepción</button>}
+        <ReceptionWorkflow reception={reception} onChange={setReception} unavailable={busy || editing || locked} onBusy={setWorkflowBusy} onEdit={() => {
+            if ('customerId' in reception && editable) { setBaseline(reception); setForm(formOf(reception)); setEditedFields(new Set<IntakeField>()); setEditing(true); setConflicted(false); }
+        }}/>
       </>}
       {editing && <form onSubmit={(e) => { e.preventDefault(); save(); }}><ReceptionFields form={form} onChange={setForm} onFieldEdited={(field) => { setEditedFields((previous) => new Set([...previous, field])); }} disabled={blocked || !editable}/>
         {validation && <p role="alert">Revisa los valores y modifica al menos un campo antes de guardar.</p>}

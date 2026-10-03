@@ -12,9 +12,28 @@ const codeCopy: Readonly<Record<string, string>> = {
     RECEPTION_MILEAGE_CONFLICT: 'El kilometraje es menor al registrado para el vehículo. Revisa el valor ingresado.',
     RECEPTION_NOT_FOUND: 'No se encontró la recepción o no está disponible para tu acceso.',
     VEHICLE_NOT_FOUND: 'No se encontró el vehículo.', CUSTOMER_NOT_FOUND: 'No se encontró el cliente.',
+    RECEPTION_NOT_CLOSABLE: 'Esta recepción no puede cerrarse. Consulta su estado actual.',
+    RECEPTION_SIGNATURE_REQUIRED: 'Registra la firma de recepción antes de cerrarla.',
+    RECEPTION_ORDER_INTEGRITY_ERROR: 'No pudimos completar el cierre. Contacta al soporte con la referencia de solicitud.',
+    SIGNATURE_MEDIA_NOT_FOUND: 'No se encontró la media de firma. Reinicia la subida.',
+    SIGNATURE_MEDIA_NOT_ELIGIBLE: 'La media no es válida para esta firma. Reinicia la subida.',
+    SIGNATURE_MEDIA_ALREADY_USED: 'Esta media ya respalda una firma. Verifica la recepción antes de reiniciar la subida.',
+    RECEPTION_ALREADY_SIGNED: 'Esta recepción ya tiene firma. Consulta el estado registrado.',
+    ACCEPTANCE_DOCUMENT_VERSION_MISMATCH: 'La versión del documento de aceptación no está vigente. Contacta al soporte.',
+    UPLOAD_SESSION_EXPIRED: 'La sesión de subida expiró. Reinicia la subida.',
+    UPLOAD_SESSION_FAILED: 'La sesión de subida falló. Reinicia la subida.',
+    UPLOAD_SESSION_ALREADY_COMPLETED: 'La sesión de subida ya se completó. Reinicia la subida para obtener evidencia activa confirmada.',
+    UPLOAD_NOT_FOUND_IN_STORAGE: 'No se confirmó la subida. Reintenta o captura una nueva firma.',
+    MEDIA_SIZE_TOO_LARGE: 'La firma excede el máximo de 2 MB. Captura una nueva firma.',
+    MEDIA_SIZE_INVALID: 'El tamaño de la firma no es válido. Captura una nueva firma.',
+    MEDIA_TYPE_NOT_ALLOWED: 'El servicio no permite este tipo de media de firma.',
+    MIME_TYPE_NOT_ALLOWED: 'El servicio no permite este formato de firma.',
+    RETENTION_CLASS_NOT_ALLOWED: 'El servicio no permite la retención de esta evidencia. Contacta al soporte.',
     REQUEST_VALIDATION_FAILED: 'Revisa los datos ingresados.', PAYLOAD_TOO_LARGE: 'Los datos exceden el tamaño permitido.',
 };
-export function receptionCopy(failure: ApiFailure): string {
+export function receptionCopy(failure: ApiFailure, closing = false): string {
+    if (closing && failure.code === 'RECEPTION_MILEAGE_CONFLICT')
+        return 'El kilometraje registrado es incompatible con el kilometraje actual del vehículo. Revisa el valor ingresado.';
     if (failure.kind === 'unauthenticated' || failure.kind === 'no_session')
         return 'Tu sesión necesita verificarse. Vuelve a iniciar sesión.';
     if (failure.status === 403)
