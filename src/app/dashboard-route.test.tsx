@@ -63,7 +63,7 @@ describe('Dashboard operativo en /panel', () => {
     expect(within(main()).getByText('Taller Alfa')).toBeDefined();
     expect(within(main()).getByText('Esto es lo que está pasando hoy')).toBeDefined();
 
-    const section = screen.getByRole('region', { name: 'Indicadores de hoy' });
+    const section = await screen.findByRole('region', { name: 'Indicadores de hoy' });
     const labels = within(section).getAllByRole('listitem').map((item) => item.textContent);
     expect(labels).toEqual([
       'Recepciones hoy6',
@@ -107,16 +107,16 @@ describe('Dashboard operativo en /panel', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Recepciones' })).toBeDefined();
   });
 
-  it('los accesos rápidos solo enlazan rutas reales; Clientes y Vehículos no generan enlace', async () => {
+  it('los accesos rápidos solo enlazan rutas reales; Clientes y Vehículos tienen rutas CRM', async () => {
     renderPanel({ permissions: FULL });
     const actions = await screen.findByRole('region', { name: 'Accesos rápidos' });
 
     const hrefs = within(actions).getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual(['/recepciones/nueva', '/recepciones']);
-    expect(within(actions).queryByRole('link', { name: /Clientes/ })).toBeNull();
-    expect(within(actions).queryByRole('link', { name: /Vehículos/ })).toBeNull();
+    expect(hrefs).toEqual(['/recepciones/nueva', '/recepciones', '/clientes', '/vehiculos']);
+    expect(within(actions).getByRole('link', { name: /Clientes/ }).getAttribute('href')).toBe('/clientes');
+    expect(within(actions).getByRole('link', { name: /Vehículos/ }).getAttribute('href')).toBe('/vehiculos');
     expect(within(actions).getByText('Clientes')).toBeDefined();
-    expect(within(actions).getAllByText('Próximamente')).toHaveLength(2);
+    expect(within(actions).queryByText('Próximamente')).toBeNull();
   });
 
   it('solo muestra los accesos y el CTA que los permisos efectivos permiten', async () => {

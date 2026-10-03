@@ -985,3 +985,89 @@ a.dash-action:hover { background: var(--dash-soft); border-color: var(--dash-blu
   .shell__brand-text { min-width: 0; overflow-wrap: anywhere; }
   .shell__header-actions { display: flex; flex-wrap: wrap; margin-left: auto; }
 }
+
+/* CRM staff workspace: established product palette. */
+.crm-page { --crm-blue:#0D4FB8; --crm-orange:#B7660C; --crm-text:#202938; --crm-muted:#596579; --crm-border:#DCE2EA; display:grid; gap:var(--tm-space-5); min-width:0; color:var(--crm-text); color-scheme:light; background:#fff; }
+.crm-page .ui-page-header { flex-wrap:wrap; gap:var(--tm-space-4); }
+.crm-page .ui-page-header__text { flex:1 1 16rem; }
+.crm-page .ui-page-header__description { color:var(--crm-muted); }
+.crm-page .ui-button { min-height:44px; border-color:var(--crm-border); background:white; color:var(--crm-text); }
+.crm-page .ui-button:hover { background:#F2F5FA; }
+.crm-page .crm-primary { background:var(--crm-blue); border-color:var(--crm-blue); color:white; }
+.crm-page .crm-primary:hover { background:#093E91; }
+.crm-page :focus-visible { outline-color:var(--crm-blue); }
+.crm-page button:disabled { opacity:.6; cursor:default; }
+.crm-page a { overflow-wrap:anywhere; }
+.crm-back { color:var(--crm-blue); justify-self:start; min-height:44px; display:inline-flex; align-items:center; }
+.crm-search { display:flex; flex-wrap:wrap; align-items:end; gap:var(--tm-space-3); padding:var(--tm-space-4); background:#F5F7FA; border:1px solid var(--crm-border); border-radius:var(--tm-radius); }
+.crm-field { min-width:0; display:grid; gap:var(--tm-space-2); align-content:start; }
+.crm-field label { font-weight:600; font-size:.9rem; }
+.crm-search-value { flex:1 1 15rem; }
+.crm-page input,.crm-page select,.crm-page textarea { width:100%; min-width:0; min-height:44px; padding:10px 12px; font:inherit; color:var(--crm-text); background:white; border:1px solid #9AA6B6; border-radius:var(--tm-radius-sm); }
+.crm-page textarea { resize:vertical; }
+.crm-page [aria-invalid="true"] { border-color:var(--crm-orange); }
+.crm-field-error { margin:0; font-size:.85rem; color:#864908; }
+.crm-results { border:1px solid var(--crm-border); border-radius:var(--tm-radius); overflow:hidden; background:white; }
+.crm-list { list-style:none; margin:0; padding:0; }
+.crm-list-heading,.crm-list li { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,1fr) 6.2rem; align-items:center; gap:var(--tm-space-4); padding:var(--tm-space-4); }
+.crm-list-heading { background:#F5F7FA; color:var(--crm-muted); font-size:.8rem; font-weight:600; }
+.crm-list li+li { border-top:1px solid var(--crm-border); }
+.crm-list li>div { min-width:0; overflow-wrap:anywhere; }
+.crm-list small,.crm-selected small,.crm-picker-results small,.crm-owner-list small { display:block; font-size:.85rem; color:var(--crm-muted); margin-top:4px; }
+.crm-record-title { font-weight:650; color:var(--crm-blue); text-decoration:none; }
+.crm-record-title:hover,.crm-detail-link:hover { text-decoration:underline; }
+.crm-plate { letter-spacing:.03em; }
+.crm-detail-link { display:inline-flex; align-items:center; min-height:44px; color:var(--crm-blue); font-size:.9rem; }
+.crm-muted { color:var(--crm-muted); font-size:.85rem; }
+.crm-mobile-label { display:none; }
+.crm-load-more { justify-self:center; }
+.crm-panel,.crm-fields,.crm-picker { margin:0; min-width:0; padding:var(--tm-space-5); background:white; border:1px solid var(--crm-border); border-radius:var(--tm-radius); }
+.crm-panel h2,.crm-conflict h2 { margin:0 0 16px; font-size:1.1rem; }
+.crm-data { margin:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--tm-space-4); }
+.crm-data dt { color:var(--crm-muted); font-size:.85rem; }
+.crm-data dd { margin:4px 0 0; overflow-wrap:anywhere; white-space:pre-wrap; }
+.crm-panel>h2 { margin-top:24px; }
+.crm-notes { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.crm-form { display:grid; gap:var(--tm-space-5); }
+.crm-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--tm-space-4); }
+.crm-field--wide { grid-column:1 / -1; }
+.crm-fields legend,.crm-picker legend { font-weight:650; padding:0 6px; }
+.crm-form-actions { display:flex; flex-wrap:wrap; gap:var(--tm-space-3); }
+.crm-error,.crm-conflict { padding:var(--tm-space-4); background:#FFF6E9; border:1px solid #E8C38D; border-radius:var(--tm-radius); overflow-wrap:anywhere; }
+.crm-error p { margin:0; }
+.crm-error .crm-support { margin-top:8px; font-size:.8rem; }
+.crm-selected,.crm-picker-results li { display:flex; gap:var(--tm-space-4); justify-content:space-between; align-items:center; overflow-wrap:anywhere; }
+.crm-selected>span,.crm-picker-results li>span { min-width:0; }
+.crm-picker-results { list-style:none; padding:0; }
+.crm-picker-results li { padding:12px 0; border-bottom:1px solid var(--crm-border); }
+.crm-owner-list { padding:0; list-style:none; }
+.crm-owner-list li { padding:12px 0; border-bottom:1px solid var(--crm-border); overflow-wrap:anywhere; }
+.crm-owner-list a { color:var(--crm-blue); }
+.crm-selection-wrap { margin:0; padding:0; border:0; min-width:0; }
+@media (max-width:47.99rem) {
+  .crm-page { gap:var(--tm-space-4); }
+  .crm-list-heading { display:none; }
+  .crm-list li { grid-template-columns:minmax(0,1fr); gap:8px; }
+  .crm-mobile-label { display:inline; color:var(--crm-muted); font-size:.8rem; margin-right:8px; }
+  .crm-fields,.crm-data { grid-template-columns:minmax(0,1fr); }
+  .crm-panel,.crm-fields,.crm-picker { padding:var(--tm-space-4); }
+  .crm-page .ui-page-header__actions { margin-left:0; }
+  .crm-search>.crm-field { flex:1 1 100%; }
+  .crm-selected,.crm-picker-results li { flex-direction:column; align-items:stretch; }
+}
+
+.crm-page .ui-page-header__title { overflow-wrap:anywhere; }
+@media (max-width:63.99rem) { .crm-list-heading { display:none; } .crm-list li { grid-template-columns:minmax(0,1fr); gap:8px; } .crm-mobile-label { display:inline; color:var(--crm-muted); font-size:.8rem; margin-right:8px; } }
+
+/* Keep workshop context and session actions readable on narrow phones. */
+.shell__header .ui-button,.shell__nav-toggle { min-height:44px; }
+@media (max-width:29.99rem) {
+  .shell__header { flex-wrap:wrap; }
+  .shell__nav-toggle { flex:0 0 auto; }
+  .shell__brand { flex:1; min-width:0; }
+  .shell__brand-mark { flex:0 0 2rem; }
+  .shell__brand-text { min-width:0; }
+  .shell__brand-name { white-space:nowrap; }
+  .shell__brand-tagline { overflow-wrap:anywhere; }
+  .shell__header-actions { flex:0 0 100%; justify-content:flex-end; }
+}
