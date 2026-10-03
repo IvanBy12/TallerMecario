@@ -7,7 +7,7 @@ import { createReceptionApi } from './reception-api';
 import { RECEPTION_ACCEPTANCE } from './reception-acceptance';
 import { putSignature } from './reception-media-upload';
 import { canvasPng } from './reception-signature-pad';
-import { parseReceptionDetail } from './reception-contract';
+import { parseReceptionDetail, type ReceptionDetail } from './reception-contract';
 import { parseActiveMedia, parseAttachedSignature, parseClosedReception, parseUploadSession } from './reception-workflow-contract';
 const MEDIA = IDS.other, SESSION = IDS.consent;
 const SIGNATURE = { signatureId: IDS.membership, documentVersion: RECEPTION_ACCEPTANCE.documentVersion, signedAt: TIME };
@@ -15,7 +15,7 @@ const ATTACHED = { ...SIGNATURE, receptionId: IDS.reception, signatureMediaId: M
 const ORDER = { id: IDS.other, receptionId: IDS.reception, vehicleId: IDS.vehicle, customerId: IDS.customer, orderNumber: '123', status: 'reception', openedAt: TIME, version: 1 };
 const CLOSED = { reception: { id: IDS.reception, status: 'closed', closedAt: TIME, updatedAt: TIME }, serviceOrder: ORDER };
 const SIGNED = { ...DETAIL, signature: SIGNATURE };
-const FINAL = { ...SIGNED, status: 'closed', closedAt: TIME, serviceOrder: { id: ORDER.id, orderNumber: ORDER.orderNumber, status: ORDER.status } };
+const FINAL = { ...SIGNED, status: 'closed' as const, closedAt: TIME, serviceOrder: { id: ORDER.id, orderNumber: ORDER.orderNumber, status: ORDER.status } };
 const UPLOAD = { uploadSessionId: SESSION, mediaAssetId: MEDIA, status: 'pending' as const, uploadUrl: 'https://storage.example.test/signature?presigned=opaque', uploadMethod: 'PUT' as const, uploadHeaders: { 'Content-Type': 'image/png', 'x-amz-meta-test': 'opaque', 'If-None-Match': '*' }, objectKey: 'internal', expiresAt: TIME };
 const BLOB = new Blob(['synthetic ink'], { type: 'image/png' });
 const ACTIVE = { mediaAssetId: MEDIA, status: 'active', sizeBytes: BLOB.size, checksumSha256: null };
@@ -30,9 +30,10 @@ const uuidMatcher: unknown = expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a
 const signalMatcher: unknown = expect.any(AbortSignal);
 let clearCanvas = vi.fn();
 let pngExport = vi.fn<(callback: BlobCallback, type?: string) => void>();
-let current: typeof DETAIL | typeof SIGNED | typeof FINAL;
+let current: ReceptionDetail;
 let storage = vi.fn<(url: string, init: RequestInit) => Promise<FetchResponse>>();
 function defaults(call: Call): FetchResponse {
+    if (call.url.pathname === '/api/v1/reception-acceptance-document') return jsonResponse({ acceptanceDocument: RECEPTION_ACCEPTANCE });
     if (call.init.method === 'GET') return jsonResponse({ reception: current });
     if (call.url.pathname.endsWith('/complete')) return jsonResponse(ACTIVE);
     if (call.url.pathname.endsWith('/upload-sessions')) return jsonResponse(UPLOAD);
@@ -67,6 +68,7 @@ afterEach(() => {
 });
 async function draw() {
     const canvas = await screen.findByLabelText('Firma manuscrita de recepción');
+    await waitFor(() => { expect(canvas.getAttribute('aria-disabled')).toBe('false'); });
     fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 35, clientY: 70, pointerType: 'touch' });
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 55, clientY: 90, pointerType: 'touch' });
     fireEvent.pointerUp(canvas, { pointerId: 1 });
@@ -342,7 +344,7 @@ describe('workflow response validation and isolated storage', () => {
         const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: url => Promise.resolve(jsonResponse(url.endsWith('/complete') ? { ...ACTIVE, mediaAssetId: IDS.vehicle } : { signature: { ...ATTACHED, receptionId: IDS.other } })) });
         const signal = new AbortController().signal, api = createReceptionApi(client, IDS.tenant, signal);
         expect((await api.completeSignatureUpload(SESSION, MEDIA, signal)).ok).toBe(false);
-        expect((await api.attachSignature(IDS.reception, MEDIA, 'Prueba', null, signal)).ok).toBe(false);
+        expect((await api.attachSignature(IDS.reception, MEDIA, 'Prueba', null, RECEPTION_ACCEPTANCE.documentVersion, signal)).ok).toBe(false);
     });
 });
 
@@ -372,7 +374,7 @@ describe('additional recovery and cancellation boundaries', () => {
         let attachCount = 0, lookupCount = 0;
         const h = renderReception(route, call => {
             if (call.url.pathname.endsWith('/signature') && ++attachCount === 1) return Promise.reject(new Error('ambiguous'));
-            if (call.init.method === 'GET' && ++lookupCount === 2) return Promise.reject(new Error('offline'));
+            if (call.init.method === 'GET' && call.url.pathname !== '/api/v1/reception-acceptance-document' && ++lookupCount === 2) return Promise.reject(new Error('offline'));
             return defaults(call);
         }, permissions);
         await prepare(); sign(); await screen.findByText(/No hay conexión/);
@@ -508,7 +510,7 @@ describe('S3-UI-04 signature regression fixes', () => {
     });
     it('contractual 201 confirms and releases evidence before refresh, and failed GET cannot undo it', async () => {
         let refresh: ((r: FetchResponse) => void) | undefined, lookups = 0;
-        const h = renderReception(route, call => call.init.method === 'GET' && ++lookups > 1 ? new Promise(r => { refresh = r; }) : defaults(call), permissions);
+        const h = renderReception(route, call => call.init.method === 'GET' && call.url.pathname !== '/api/v1/reception-acceptance-document' && ++lookups > 1 ? new Promise(r => { refresh = r; }) : defaults(call), permissions);
         await prepare(); sign(); await screen.findByText('Firma registrada');
         await waitFor(() => { expect(refresh).toBeDefined(); });
         expect(screen.queryByLabelText('Firma manuscrita de recepción')).toBeNull();
@@ -592,11 +594,11 @@ describe('S3-UI-04 signature regression fixes', () => {
         for (const value of values) {
             const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: () => Promise.resolve(jsonResponse(value, 201)) });
             const signal = new AbortController().signal;
-            expect(await createReceptionApi(client, IDS.tenant, signal).attachSignature(IDS.reception, MEDIA, 'Prueba', null, signal)).toMatchObject({ ok: false, failure: { kind: 'contract_violation' } });
+            expect(await createReceptionApi(client, IDS.tenant, signal).attachSignature(IDS.reception, MEDIA, 'Prueba', null, RECEPTION_ACCEPTANCE.documentVersion, signal)).toMatchObject({ ok: false, failure: { kind: 'contract_violation' } });
         }
         const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: () => Promise.resolve(jsonResponse({ signature: ATTACHED }, 201)) });
         const signal = new AbortController().signal;
-        expect(await createReceptionApi(client, IDS.tenant, signal).attachSignature(IDS.reception, MEDIA, 'Prueba', null, signal)).toEqual({ ok: true, data: ATTACHED });
+        expect(await createReceptionApi(client, IDS.tenant, signal).attachSignature(IDS.reception, MEDIA, 'Prueba', null, RECEPTION_ACCEPTANCE.documentVersion, signal)).toEqual({ ok: true, data: ATTACHED });
     });
 });
 
@@ -613,4 +615,88 @@ it('ambiguous creation of a session retries with the same key and Blob until exp
     expect(sessions).toHaveLength(2); expect(body(sessions[0])).toEqual(body(sessions[1]));
     expect(storage).toHaveBeenCalledTimes(1); expect(storage.mock.calls[0]?.[1].body).toBe(BLOB);
     expect(pngExport).toHaveBeenCalledTimes(1);
+});
+
+describe('runtime acceptance document', () => {
+    const backendDocument = { documentVersion: 'server_version_exact_v9', text: ' Texto exacto del backend\n\nSegunda línea.\n' };
+    it('GETs the real endpoint, renders exact text/version and signs with that same version', async () => {
+        const h = renderReception(route, call => {
+            if (call.url.pathname === '/api/v1/reception-acceptance-document') return jsonResponse({ acceptanceDocument: backendDocument });
+            if (call.url.pathname.endsWith('/signature')) { current = { ...DETAIL, signature: { ...SIGNATURE, documentVersion: backendDocument.documentVersion } }; return jsonResponse({ signature: { ...ATTACHED, documentVersion: backendDocument.documentVersion } }, 201); }
+            return defaults(call);
+        }, permissions);
+        await prepare();
+        const text = screen.getByText(/Texto exacto del backend/);
+        expect(text.textContent).toBe(backendDocument.text);
+        expect(screen.getByText('Versión: ' + backendDocument.documentVersion)).toBeDefined();
+        sign(); await screen.findByText('Firma registrada');
+        expect(body(mutation(h.calls, '/signature')[0])).toMatchObject({ documentVersion: backendDocument.documentVersion });
+        const get = h.calls.filter(call => call.url.pathname === '/api/v1/reception-acceptance-document');
+        expect(get).toHaveLength(1); expect(get[0]?.init.method).toBe('GET'); expect(get[0]?.url.search).toBe('');
+    });
+    it.each([jsonResponse(null), errorResponse('INTERNAL_ERROR', 500), errorResponse('PERMISSION_DENIED', 403)])('failed GET disables signature with no local fallback; explicit retry recovers', async response => {
+        let attempts = 0;
+        const h = renderReception(route, call => call.url.pathname === '/api/v1/reception-acceptance-document' ? ++attempts === 1 ? response : jsonResponse({ acceptanceDocument: backendDocument }) : defaults(call), permissions);
+        await screen.findByRole('button', { name: 'Reintentar documento de aceptación' });
+        expect(screen.getByRole('button', { name: 'Registrar firma' }).hasAttribute('disabled')).toBe(true);
+        expect(screen.queryByText(RECEPTION_ACCEPTANCE.text)).toBeNull();
+        expect(attempts).toBe(1); sign(); expect(mutation(h.calls, '/upload-sessions')).toHaveLength(0);
+        fireEvent.click(screen.getByRole('button', { name: 'Reintentar documento de aceptación' }));
+        await screen.findByText('Versión: ' + backendDocument.documentVersion);
+        expect(attempts).toBe(2);
+    });
+    it.each([SIGNED, FINAL])('signed reception displays summary without requesting acceptance', async data => {
+        const h = renderReception(route, () => jsonResponse({ reception: data }), permissions);
+        await screen.findByText('Firma registrada');
+        expect(h.calls.some(call => call.url.pathname === '/api/v1/reception-acceptance-document')).toBe(false);
+    });
+});
+describe('shared inspection/signature/close coordination', () => {
+    const checklist = { checkItemId: IDS.other, code: 'lights', label: 'Luces', status: 'ok' as const, notes: null, createdAt: TIME };
+    it.each([false, true])('checklist saving disables signature/close, signed=%s', async signed => {
+        let resolve: ((r: FetchResponse) => void) | undefined;
+        current = signed ? { ...SIGNED, checklist: [checklist] } : { ...DETAIL, checklist: [checklist] };
+        const h = renderReception(route, call => call.init.method === 'PATCH' ? new Promise(r => { resolve = r; }) : defaults(call), permissions);
+        if (!signed) await prepare();
+        fireEvent.click(await screen.findByRole('button', { name: 'Editar elemento Luces' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar checklist' }));
+        await screen.findByText('Guardando inspección…');
+        const button = screen.getByRole('button', { name: signed ? 'Cerrar recepción' : 'Registrar firma' });
+        expect(button.hasAttribute('disabled')).toBe(true); fireEvent.click(button);
+        expect(mutation(h.calls, '/upload-sessions')).toHaveLength(0); expect(mutation(h.calls, '/close')).toHaveLength(0);
+        await act(() => { resolve?.(jsonResponse({ reception: { ...current, updatedAt: '2026-10-03T12:13:14.456789Z' } })); return Promise.resolve(); });
+        await waitFor(() => { expect(screen.queryByText('Guardando inspección…')).toBeNull(); });
+    });
+    it.each(['signature', 'close'] as const)('%s blocks checklist, damages and general editing throughout mutation', async operation => {
+        let resolve: ((r: FetchResponse) => void) | undefined;
+        if (operation === 'close') current = SIGNED;
+        else storage.mockImplementation(() => new Promise(r => { resolve = r; }));
+        const h = renderReception(route, call => operation === 'close' && call.url.pathname.endsWith('/close') ? new Promise(r => { resolve = r; }) : defaults(call), permissions);
+        if (operation === 'signature') { await prepare(); sign(); await screen.findByText('Subiendo firma…'); }
+        else { await confirmClose(); await screen.findAllByText('Cerrando recepción…'); }
+        for (const name of ['Agregar elemento de checklist', 'Agregar daño', 'Editar recepción']) {
+            const button = screen.getByRole('button', { name });
+            expect(button.hasAttribute('disabled')).toBe(true); fireEvent.click(button);
+        }
+        expect(h.calls.some(call => call.init.method === 'PATCH')).toBe(false);
+        await act(() => { resolve?.(operation === 'close' ? jsonResponse(CLOSED) : jsonResponse(null)); return Promise.resolve(); });
+        await screen.findByText(operation === 'close' ? 'Generada correctamente' : 'Firma registrada');
+    });
+});
+
+it('close keeps updatedAt opaque even during validation', () => {
+    const parse = vi.spyOn(Date, 'parse');
+    const exact = '2026-10-03T15:04:05.987654Z';
+    const result = parseClosedReception({ ...CLOSED, reception: { ...CLOSED.reception, updatedAt: exact } });
+    expect(result?.reception.updatedAt).toBe(exact);
+    expect(parse.mock.calls.some(([value]) => value === exact)).toBe(false);
+});
+it('acceptance rate-limit remains an explicit retry and never reloads automatically', async () => {
+    let requests = 0;
+    renderReception(route, call => call.url.pathname === '/api/v1/reception-acceptance-document' ? (++requests, errorResponse('RATE_LIMIT_EXCEEDED', 429, '0')) : defaults(call), permissions);
+    await screen.findByRole('button', { name: 'Reintentar documento de aceptación' });
+    expect(requests).toBe(1);
+    expect(screen.getByRole('button', { name: 'Registrar firma' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar documento de aceptación' }));
+    await waitFor(() => { expect(requests).toBe(2); });
 });

@@ -10,7 +10,7 @@ export type IntakeField = keyof IntakeForm;
 export type EditedIntakeFields = ReadonlySet<IntakeField>;
 export const EMPTY_FORM: IntakeForm = { mileageKm: '', fuelLevelPct: '', customerNotes: '', advisorNotes: '' };
 export function formOf(r: Reception): IntakeForm { return { mileageKm: String(r.mileageKm), fuelLevelPct: r.fuelLevelPct === null ? '' : String(r.fuelLevelPct), customerNotes: r.customerNotes ?? '', advisorNotes: r.advisorNotes ?? '' }; }
-function notes(value: string): string | null | false {
+export function normalizeReceptionText(value: string): string | null | false {
     for (let i = 0; i < value.length; i += 1) {
         const code = value.charCodeAt(i);
         if (code >= 0xd800 && code <= 0xdbff) {
@@ -30,7 +30,7 @@ export function intakeBody(form: IntakeForm): JsonObject | null {
     if (!/^\d+$/.test(form.mileageKm) || (form.fuelLevelPct !== '' && !/^\d+$/.test(form.fuelLevelPct)))
         return null;
     const mileageKm = Number(form.mileageKm), fuelLevelPct = form.fuelLevelPct === '' ? null : Number(form.fuelLevelPct);
-    const customerNotes = notes(form.customerNotes), advisorNotes = notes(form.advisorNotes);
+    const customerNotes = normalizeReceptionText(form.customerNotes), advisorNotes = normalizeReceptionText(form.advisorNotes);
     return mileageKm > 2147483647 || (fuelLevelPct !== null && fuelLevelPct > 100) || customerNotes === false || advisorNotes === false ? null : { mileageKm, fuelLevelPct, customerNotes, advisorNotes };
 }
 export function patchBody(form: IntakeForm, baseline: Reception, editedFields: EditedIntakeFields): JsonObject | null {
@@ -65,7 +65,7 @@ export function validReceptionBody(body: JsonObject, patch: boolean): boolean {
         return false;
     for (const key of ['customerNotes', 'advisorNotes']) {
         const value = body[key];
-        if (Object.hasOwn(body, key) && value !== null && (typeof value !== 'string' || notes(value) === false))
+        if (Object.hasOwn(body, key) && value !== null && (typeof value !== 'string' || normalizeReceptionText(value) === false))
             return false;
     }
     return true;

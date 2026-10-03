@@ -119,3 +119,6 @@ export function currentOwner(owners: readonly Owner[]): Owner | null {
     const current = owners.filter((o) => o.isPrimary && o.validTo === null);
     return current.length === 1 ? current[0] ?? null : null;
 }
+
+export const parseAcceptanceDocument = object({ acceptanceDocument: object({ documentVersion: nonempty, text: nonempty }) });
+export type AcceptanceDocument = NonNullable<ReturnType<typeof parseAcceptanceDocument>>['acceptanceDocument'];

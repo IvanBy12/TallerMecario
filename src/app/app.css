@@ -1090,3 +1090,12 @@ a.dash-action:hover { background: var(--dash-soft); border-color: var(--dash-blu
 .reception-evidence dl { display: grid; gap: var(--tm-space-2); }
 .reception-close-dialog h2 { margin-bottom: var(--tm-space-4); }
 .reception-close-dialog .reception-actions { margin-top: var(--tm-space-4); }
+
+.reception-inspection { display: grid; gap: var(--tm-space-4); min-width: 0; }
+.reception-inspection :where(form, fieldset) { display: grid; gap: var(--tm-space-4); min-width: 0; }
+.reception-inspection fieldset { margin: 0; padding: 0; border: 0; }
+.reception-inspection legend { margin-bottom: var(--tm-space-4); }
+.reception-inspection li { min-width: 0; overflow-wrap: anywhere; }
+.reception-page :where(input, select, textarea) { min-width: 0; min-height: 44px; }
+.reception-page .reception-actions > * { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.reception-inspection input[readonly] { background: var(--tm-surface-muted); }

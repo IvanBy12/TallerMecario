@@ -1,4 +1,4 @@
-// Published acceptance: immutable v1. Any content change requires a new version.
+// Test fixture for published v1 drift checks. Runtime uses the acceptance-document endpoint.
 export const RECEPTION_ACCEPTANCE = Object.freeze({
     documentVersion: 'reception_acceptance_es-CO_v1',
     text: `ACEPTACIÓN DE RECEPCIÓN DEL VEHÍCULO
@@ -11,4 +11,3 @@ Reconozco que esta firma se conserva como evidencia de la recepción del vehícu
 
 Esta aceptación no sustituye autorizaciones de tratamiento de datos personales, marketing, WhatsApp, cotizaciones, reparaciones ni otros consentimientos o autorizaciones que deban obtenerse por separado.`,
 });
-export const SIGNATURE_MAX_BYTES = 2 * 1024 * 1024;

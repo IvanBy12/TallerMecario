@@ -1,6 +1,6 @@
 import { requiredErrors, type FieldSpec, type FormValues } from '@/shared/crm/form';
 import type { EffectivePermissions } from '@/shared/auth/effective-permissions';
-import { can } from '@/shared/auth/effective-permissions';
+export { canCreateVehicle } from '@/shared/crm/permissions';
 export const VEHICLE_FIELDS: readonly FieldSpec[] = [
   { key: 'plate', label: 'Placa', required: true },
   { key: 'vehicleType', label: 'Tipo de vehículo', type: 'select', required: true, options: [{ value: 'car', label: 'Carro' }, { value: 'motorcycle', label: 'Moto' }, { value: 'other', label: 'Otro' }] },
@@ -14,9 +14,7 @@ export function vehicleErrors(values: FormValues) {
   if (!['car', 'motorcycle', 'other'].includes(values['vehicleType'] ?? '')) errors['vehicleType'] = 'Selecciona un tipo de vehículo.';
   return errors;
 }
-export function canCreateVehicle(permissions: EffectivePermissions) {
-  return ['vehicles.create', 'vehicles.read', 'vehicle_owners.manage', 'customers.read'].every(code => can(permissions, code, true));
-}
+
 export function canReadVehicle(permissions: EffectivePermissions) {
   return permissions.some(p => p.code === 'vehicles.read' && p.scopes.some(s => s === 'tenant' || s === 'assigned'));
 }
