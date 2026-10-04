@@ -235,9 +235,8 @@ describe('inspection recovery boundaries', () => {
         fireEvent.click(choose); fireEvent.click(choose);
         await waitFor(() => { expect(screen.queryByRole('region', { name: 'Asociación explícita de daño' })).toBeNull(); });
         expect(patches(h.calls)).toHaveLength(1);
-        expect(screen.queryByRole('form', { name: 'Edición de daño' })).toBeNull();
-        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(false);
-        click('Editar daño rear · dent');
+        expect(screen.getByRole('form', { name: 'Edición de daño' })).toBeDefined();
+        expect(screen.getByText('Editar daño existente')).toBeDefined();
         expect(screen.getByLabelText<HTMLInputElement>('Zona').value).toBe(created.zoneCode);
         expect(screen.getByLabelText<HTMLTextAreaElement>('Descripción opcional').value).toBe(created.description);
         change('Severidad', 'severe'); click('Guardar daño');
@@ -308,10 +307,9 @@ describe('inspection recovery boundaries', () => {
         expect(within(region).getByText(selected.damageId)).toBeDefined();
         expect(within(region).getByText(selected.description)).toBeDefined();
         click('Usar este daño como el registrado: ' + selected.damageId);
-        await waitFor(() => { expect(screen.queryByRole('form', { name: 'Edición de daño' })).toBeNull(); });
+        await waitFor(() => { expect(screen.queryByRole('region', { name: 'Asociación explícita de daño' })).toBeNull(); });
+        expect(screen.getByRole('form', { name: 'Edición de daño' })).toBeDefined();
         expect(patches(h.calls)).toHaveLength(1);
-        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(false);
-        click('Editar daño left · dent');
         expect(screen.getByLabelText<HTMLInputElement>('Zona').value).toBe(selected.zoneCode);
         expect(screen.getByLabelText<HTMLSelectElement>('Severidad').value).toBe(selected.severity);
         expect(screen.getByLabelText<HTMLTextAreaElement>('Descripción opcional').value).toBe(selected.description);
@@ -319,6 +317,35 @@ describe('inspection recovery boundaries', () => {
         await waitFor(() => { expect(patches(h.calls)).toHaveLength(2); });
         expect(payload(patches(h.calls)[1])).toEqual({ expectedUpdatedAt: NEXT, damages: [{ operation: 'update', damageId: selected.damageId,
             zoneCode: selected.zoneCode, damageType: selected.damageType, severity: selected.severity, description: 'Edición posterior explícita' }] });
+    });
+    it('keeps the explicitly selected identical-content candidate B (not the first match) open for editing on the current OCC', async () => {
+        let writes = 0;
+        const candidateA = { ...DAMAGE, damageId: IDS.vehicle, zoneCode: 'rear', damageType: 'dent', severity: 'minor' as const, description: 'Idéntico' };
+        const candidateB = { ...candidateA, damageId: IDS.customer };
+        const canonical = { ...initial, updatedAt: NEXT, damages: [...initial.damages, candidateA, candidateB] };
+        const h = renderReception(route, call => call.init.method === 'PATCH' ?
+            ++writes === 1 ? Promise.reject(new Error('ambiguous')) : jsonResponse({ reception: { ...canonical, updatedAt: '2026-10-03T11:00:00.123456Z' } }) :
+            jsonResponse({ reception: writes === 0 ? initial : canonical }));
+        await screen.findByRole('button', { name: 'Agregar daño' }); click('Agregar daño');
+        change('Zona', 'rear'); change('Tipo de daño', 'dent'); change('Descripción opcional', 'Idéntico'); click('Guardar daño');
+        const region = await screen.findByRole('region', { name: 'Asociación explícita de daño' });
+        expect(within(region).getAllByRole('button', { name: /Usar este daño como el registrado:/ })).toHaveLength(3);
+        click('Usar este daño como el registrado: ' + candidateB.damageId);
+        await waitFor(() => { expect(screen.queryByRole('region', { name: 'Asociación explícita de daño' })).toBeNull(); });
+        // Association alone: editor stays mounted on B's canonical data, no write.
+        expect(screen.getByRole('form', { name: 'Edición de daño' })).toBeDefined();
+        expect(screen.getByText('Editar daño existente')).toBeDefined();
+        expect(screen.getByLabelText<HTMLInputElement>('Zona').value).toBe(candidateB.zoneCode);
+        expect(screen.getByLabelText<HTMLTextAreaElement>('Descripción opcional').value).toBe(candidateB.description);
+        expect(screen.getByLabelText<HTMLSelectElement>('Severidad').value).toBe('minor');
+        expect(patches(h.calls)).toHaveLength(1);
+        // Next action does not go through the main list: edit and save from the open editor.
+        change('Severidad', 'moderate'); click('Guardar daño');
+        await waitFor(() => { expect(patches(h.calls)).toHaveLength(2); });
+        const body = payload(patches(h.calls)[1]);
+        expect(body).toEqual({ expectedUpdatedAt: NEXT, damages: [{ operation: 'update', damageId: candidateB.damageId,
+            zoneCode: 'rear', damageType: 'dent', severity: 'moderate', description: 'Idéntico' }] });
+        expect(JSON.stringify(body)).not.toContain(candidateA.damageId);
     });
     it('keeps recovery pending when a changed version has no existing damage to associate', async () => {
         let writes = 0;

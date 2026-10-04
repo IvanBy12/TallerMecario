@@ -696,6 +696,9 @@ describe('shared inspection/signature/close coordination', () => {
         blockedWorkflow();
         fireEvent.click(screen.getByRole('button', { name: 'Usar este daño como el registrado: ' + concurrent.damageId }));
         await waitFor(() => { expect(screen.queryByRole('region', { name: 'Asociación explícita de daño' })).toBeNull(); });
+        // The editor stays open on the chosen damage; leaving it performs no write and frees the workflow.
+        expect(screen.getByRole('form', { name: 'Edición de daño' })).toBeDefined();
+        fireEvent.click(screen.getByRole('button', { name: 'Salir de inspección' }));
         expect(screen.getByRole('button', { name: signed ? 'Cerrar recepción' : 'Registrar firma' }).hasAttribute('disabled')).toBe(false);
         expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(false);
         expect(h.calls.filter(call => call.init.method === 'PATCH')).toHaveLength(1);

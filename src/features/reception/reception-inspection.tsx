@@ -99,7 +99,11 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
         void action.run(() => Promise.resolve({ ok: true as const, data: canonical }), item => {
             setDamage({ damageId: item.damageId, zoneCode: item.zoneCode, damageType: item.damageType,
                 severity: item.severity, description: item.description ?? '' });
-            confirmed(recoveryReception);
+            // The explicit choice resolves the ambiguous create; the editor stays open on the
+            // chosen canonical damage and any later save is a new mutation on the current OCC.
+            onChange(recoveryReception); setAmbiguousCreate(null); setConflict(false); setRecoveryFailure(null);
+            setRecoveryReception(null); setRecovered(false); setReviewed(false);
+            onRecoveryPending(false); setMode('damages'); onEditing(true);
         });
     };
     return <div className="reception-inspection">
