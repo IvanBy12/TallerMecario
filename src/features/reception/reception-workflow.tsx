@@ -1,17 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { classifyFailure, type ApiFailure } from '@/shared/api/api-failure';
 import type { ApiResult } from '@/shared/api/http-client';
 import { can, useReception } from './reception-context';
-import type { ReceptionDetail } from './reception-contract';
-import type { UploadSession } from './reception-workflow-contract';
-import { RECEPTION_ACCEPTANCE, SIGNATURE_MAX_BYTES } from './reception-acceptance';
+import type { AcceptanceDocument, ReceptionDetail } from './reception-contract';
+import { SIGNATURE_MAX_BYTES, type UploadSession } from './reception-workflow-contract';
 import { ReceptionSignaturePad, type SignaturePadHandle } from './reception-signature-pad';
 import { putSignature } from './reception-media-upload';
 import { RequestReference } from './request-reference';
-import { useReceptionAction } from './use-reception-action';
+import { useReceptionAction, type ReceptionCoordinator } from './use-reception-action';
 type Stage = 'idle' | 'drawing' | 'creating_upload_session' | 'uploading' | 'completing_upload' | 'attaching_signature' | 'success' | 'error' | 'upload_ambiguous';
 interface Attempt {
-    blob: Blob; key: string; name: string; document: string | null;
+    blob: Blob; key: string; name: string; document: string | null; documentVersion: string;
     session: UploadSession | null; sessionId: string | null; mediaId: string | null; uploaded: boolean; active: boolean; reconcile: boolean;
 }
 const AMBIGUOUS = new Set(['network', 'timeout', 'server_error', 'contract_violation']);
@@ -21,12 +20,16 @@ const progress: Partial<Record<Stage, string>> = {
     completing_upload: 'Verificando subida…', attaching_signature: 'Registrando firma…',
 };
 function invalid<T>(): ApiResult<T> { return { ok: false, failure: classifyFailure({ source: 'contract' }) }; }
-export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, onEdit }: {
+export function ReceptionWorkflow({ reception, onChange, unavailable, coordinator, onEdit }: {
     readonly reception: ReceptionDetail; readonly onChange: (data: ReceptionDetail) => void;
-    readonly unavailable: boolean; readonly onBusy: (busy: boolean) => void; readonly onEdit: () => void;
+    readonly unavailable: boolean; readonly coordinator: ReceptionCoordinator; readonly onEdit: () => void;
 }) {
     const { api, permissions, signal } = useReception();
-    const action = useReceptionAction();
+    const action = useReceptionAction(coordinator);
+    const acceptance = useReceptionAction();
+    const [acceptanceDocument, setAcceptanceDocument] = useState<AcceptanceDocument | null>(null);
+    const { run: runAcceptance } = acceptance;
+    const loadAcceptance = useCallback(() => runAcceptance(() => api.acceptanceDocument(), data => { setAcceptanceDocument(data.acceptanceDocument); }), [api, runAcceptance]);
     const [stage, setStage] = useState<Stage>('idle');
     const [name, setName] = useState(''), [document, setDocument] = useState(''), [read, setRead] = useState(false);
     const [hasInk, setHasInk] = useState(false), [validation, setValidation] = useState<string | null>(null);
@@ -44,13 +47,13 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
         return () => { controller.abort(); attempt.current = null; };
     }, []);
     const alive = () => !signal.aborted && !lifetime.current.signal.aborted;
-    useEffect(() => { onBusy(action.busy); return () => { onBusy(false); }; }, [action.busy, onBusy]);
     useEffect(() => { if (confirm) dialog.current?.showModal(); }, [confirm]);
     useEffect(() => { if (closedHere && reception.status === 'closed') orderHeading.current?.focus(); }, [closedHere, reception.status]);
     const dismissClose = () => { dialog.current?.close(); setConfirm(false); closeButton.current?.focus(); };
     const blocked = action.blocked || unavailable;
     const canSign = reception.status === 'open' && reception.signature === null &&
         can(permissions, 'signatures.capture', true) && can(permissions, 'media.upload', true);
+    useEffect(() => { if (canSign) void loadAcceptance(); }, [canSign, loadAcceptance]);
     const canClose = reception.status === 'open' && reception.signature !== null && can(permissions, 'receptions.close', true);
     const cancel = (): ApiResult<ReceptionDetail> => ({ ok: false, failure: classifyFailure({ source: 'transport', reason: 'aborted' }) });
     const resetEvidence = () => {
@@ -68,7 +71,7 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
         return result;
     };
     const signature = (restart = false) => {
-        if (!canSign || blocked || !alive()) return;
+        if (!canSign || blocked || acceptanceDocument === null || !alive()) return;
         if (attempt.current === null && (!name.trim() || name.length > 200 || document.length > 60 || !read || !hasInk)) {
             setValidation('Revisa el nombre, confirma la lectura y dibuja una firma antes de enviarla.'); return;
         }
@@ -81,7 +84,7 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
                 if (!blob || blob.size === 0 || blob.type !== 'image/png' || blob.size > SIGNATURE_MAX_BYTES) {
                     setValidation('Dibuja una firma PNG de hasta 2 MB.'); return invalid();
                 }
-                attempt.current = { blob, key: crypto.randomUUID(), name: name.trim(), document: document.trim() || null,
+                attempt.current = { blob, key: crypto.randomUUID(), name: name.trim(), document: document.trim() || null, documentVersion: acceptanceDocument.documentVersion,
                     session: null, sessionId: null, mediaId: null, uploaded: false, active: false, reconcile: false };
             }
             const current = attempt.current;
@@ -130,7 +133,7 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
             }
             if (current.mediaId === null) return invalid();
             setStage('attaching_signature');
-            const attached = await api.attachSignature(reception.receptionId, current.mediaId, current.name, current.document, lifetime.current.signal);
+            const attached = await api.attachSignature(reception.receptionId, current.mediaId, current.name, current.document, current.documentVersion, lifetime.current.signal);
             if (!alive()) return cancel();
             if (attached.ok) {
                 const result = { ...reception, signature: { signatureId: attached.data.signatureId, documentVersion: attached.data.documentVersion, signedAt: attached.data.signedAt } };
@@ -200,15 +203,18 @@ export function ReceptionWorkflow({ reception, onChange, unavailable, onBusy, on
             {reception.signature !== null ? <><p>Firma registrada</p><dl><dt>Documento</dt><dd>{reception.signature.documentVersion}</dd><dt>Firmado</dt><dd>{reception.signature.signedAt}</dd></dl></> :
                 canSign ? <form onSubmit={event => { event.preventDefault(); signature(); }}>
                     <p>Documento de aceptación de esta recepción · {reception.receivedAt} · {reception.mileageKm} km</p>
-                    <p className="reception-text reception-acceptance">{RECEPTION_ACCEPTANCE.text}</p>
-                    <fieldset disabled={blocked || attempt.current !== null}>
+                    {acceptance.busy && <p role="status">Cargando documento de aceptación…</p>}
+                    <RequestReference failure={acceptance.failure}/>
+                    {acceptance.failure !== null && <button type="button" disabled={acceptance.blocked} onClick={() => { void loadAcceptance(); }}>Reintentar documento de aceptación</button>}
+                    {acceptanceDocument !== null && <><p className="reception-text">Versión: {acceptanceDocument.documentVersion}</p><p className="reception-text reception-acceptance">{acceptanceDocument.text}</p></>}
+                    <fieldset disabled={blocked || acceptanceDocument === null || attempt.current !== null}>
                         <label>Nombre del firmante *<input required maxLength={200} value={name} onChange={e => { setName(e.target.value); }}/></label>
                         <label>Documento del firmante (opcional)<input maxLength={60} value={document} onChange={e => { setDocument(e.target.value); }}/></label>
                         <label className="reception-check"><input type="checkbox" checked={read} onChange={e => { setRead(e.target.checked); }}/>He leído el documento de aceptación mostrado.</label>
                     </fieldset>
-                    <ReceptionSignaturePad ref={pad} disabled={blocked || attempt.current !== null} onDrawing={ink => { setHasInk(ink); if (attempt.current === null) setStage(ink ? 'drawing' : 'idle'); }}/>
+                    <ReceptionSignaturePad ref={pad} disabled={blocked || acceptanceDocument === null || attempt.current !== null} onDrawing={ink => { setHasInk(ink); if (attempt.current === null) setStage(ink ? 'drawing' : 'idle'); }}/>
                     {validation !== null && <p role="alert">{validation}</p>}
-                    {attempt.current === null ? <button className="ui-button" type="submit" disabled={blocked || !name.trim() || !read || !hasInk}>Registrar firma</button> :
+                    {attempt.current === null ? <button className="ui-button" type="submit" disabled={blocked || acceptanceDocument === null || !name.trim() || !read || !hasInk}>Registrar firma</button> :
                         <><button className="ui-button" type="button" disabled={blocked || (restartable && (failure?.status === 412 || RESTART.has(failure?.code ?? '')))} onClick={() => { signature(); }}>Reintentar registro de firma</button>
                         {restartable && <button className="ui-button" type="button" disabled={blocked} onClick={() => { signature(true); }}>Reiniciar subida</button>}
                         <button className="ui-button" type="button" disabled={blocked} onClick={() => { attempt.current = null; pad.current?.clear(); setStage('idle'); }}>Nueva firma</button></>}

@@ -1,3 +1,6 @@
+import { Link } from 'react-router-dom';
+import { canCreateVehicle } from '@/shared/crm/permissions';
+import { NEW_CUSTOMER_FROM_RECEPTION, NEW_VEHICLE_FROM_RECEPTION } from '@/shared/crm/reception-return';
 import { useState } from 'react';
 import { can, useReception } from './reception-context';
 import type { Customer, Vehicle } from './reception-contract';
@@ -55,7 +58,7 @@ export function ReceptionPicker({ kind, onVehicle, onCustomer, disabled = false 
     {invalid && <p role="alert">{vehicle ? 'Ingresa una placa válida de 1 a 16 letras o números.' : 'Ingresa un nombre válido.'}</p>}
     {action.busy && <p role="status">Buscando…</p>}<RequestReference failure={action.failure}/>
     {action.failure !== null && <button type="button" disabled={unavailable} onClick={() => { search(); }}>Reintentar búsqueda</button>}
-    {searched && (vehicle ? vehicles.length === 0 : customers.length === 0) && <p>No se encontraron resultados.</p>}
+    {searched && (vehicle ? vehicles.length === 0 : customers.length === 0) && <div><p>No se encontraron resultados.</p>{vehicle && <div className="reception-actions">{can(permissions, 'customers.create', true) && can(permissions, 'customers.read', true) && <Link className="ui-button" to={NEW_CUSTOMER_FROM_RECEPTION}>Crear cliente y luego vehículo</Link>}{canCreateVehicle(permissions) && <Link className="ui-button" to={NEW_VEHICLE_FROM_RECEPTION}>Crear vehículo</Link>}</div>}</div>}
     <ul>{vehicle ? vehicles.map((v) => <li key={v.vehicleId}><button type="button" disabled={unavailable} onClick={() => onVehicle?.(v)}>{v.plate} — {v.brand} {v.model}</button></li>) : customers.map((c) => <li key={c.customerId}><button type="button" disabled={unavailable} onClick={() => onCustomer?.(c)}>{c.firstName} {c.lastName}</button></li>)}</ul>
     {cursor !== null && <button type="button" disabled={unavailable} onClick={() => { search(true); }}>Más resultados</button>}
   </div>;

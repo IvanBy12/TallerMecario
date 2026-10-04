@@ -97,11 +97,12 @@ describe('reception list and routing', () => {
     });
 });
 describe('reception detail and edits', () => {
-    it('displays tenant detail, readonly checklist and damages', async () => {
+    it('displays tenant detail and inspection editing actions', async () => {
         renderReception(`/recepciones/${IDS.reception}`, () => jsonResponse({ reception: { ...DETAIL, checklist: [{ checkItemId: IDS.other, code: 'lights', label: 'Luces', status: 'issue', notes: 'Revisar luz', createdAt: TIME }], damages: [{ damageId: IDS.other, zoneCode: 'front', damageType: 'scratch', severity: 'minor', description: 'Daño de prueba', createdAt: TIME }] } }));
         await screen.findByText('Luces: Novedad');
         expect(screen.getByText('Daño de prueba')).toBeDefined();
-        expect(screen.queryByRole('button', { name: /checklist|daño/i })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Agregar elemento de checklist' })).toBeDefined();
+        expect(screen.getByRole('button', { name: 'Agregar daño' })).toBeDefined();
     });
     it('renders assigned DTO without internal notes or edition', async () => {
         renderReception(`/recepciones/${IDS.reception}`, () => jsonResponse({ reception: TECH }), [{ code: 'receptions.read', scopes: ['assigned'] }]);
