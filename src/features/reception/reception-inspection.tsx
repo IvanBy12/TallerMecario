@@ -10,22 +10,8 @@ import { useReceptionAction, type ReceptionCoordinator } from './use-reception-a
 type ChecklistForm = { code: string; label: string; status: ChecklistState; notes: string };
 type DamageForm = { damageId: string | null; zoneCode: string; damageType: string; severity: DamageSeverity; description: string };
 type DamageCreate = { operation: 'create'; zoneCode: string; damageType: string; severity: DamageSeverity; description: string | null };
-type CreateAttempt = { body: JsonObject; entry: DamageCreate; baseline: ReceptionDetail };
+type CreateAttempt = { body: JsonObject };
 const ambiguous = (error: ApiFailure) => ['network', 'timeout', 'server_error', 'contract_violation'].includes(error.kind);
-function reconciledDamage(attempt: CreateAttempt, current: ReceptionDetail) {
-    if (!('updatedAt' in current) || current.updatedAt === attempt.body['expectedUpdatedAt']) return null;
-    const previous = attempt.baseline.damages;
-    const added = current.damages.filter(item => !previous.some(old => old.damageId === item.damageId));
-    // A single new canonical match, with every previous damage unchanged, identifies
-    // the intended logical damage. Multiple candidates never authorize a fresh create.
-    if (added.length !== 1 || current.damages.length !== previous.length + 1 ||
-        !previous.every(old => current.damages.some(item => item.damageId === old.damageId &&
-            item.zoneCode === old.zoneCode && item.damageType === old.damageType && item.severity === old.severity &&
-            item.description === old.description && item.createdAt === old.createdAt))) return null;
-    const item = added[0];
-    return item !== undefined && item.zoneCode === attempt.entry.zoneCode && item.damageType === attempt.entry.damageType &&
-        item.severity === attempt.entry.severity && item.description === attempt.entry.description ? item : null;
-}
 const EMPTY_CHECKLIST: ChecklistForm = { code: '', label: '', status: 'not_checked', notes: '' };
 const EMPTY_DAMAGE: DamageForm = { damageId: null, zoneCode: '', damageType: '', severity: 'minor', description: '' };
 export function ReceptionInspection({ reception, editable, unavailable, coordinator, onChange, onEditing, onRecoveryPending, onLock }: {
@@ -43,32 +29,31 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
     const [conflict, setConflict] = useState(false);
     const [recovered, setRecovered] = useState(false);
     const [recoveryFailure, setRecoveryFailure] = useState<ApiFailure | null>(null);
+    const [recoveryReception, setRecoveryReception] = useState<ReceptionDetail | null>(null);
     const [ambiguousCreate, setAmbiguousCreate] = useState<CreateAttempt | null>(null);
     const [reviewed, setReviewed] = useState(false);
     const blocked = unavailable || action.blocked || !editable;
+    const createVersionUnchanged = ambiguousCreate !== null && recoveryReception !== null &&
+        'updatedAt' in recoveryReception && recoveryReception.updatedAt === ambiguousCreate.body['expectedUpdatedAt'];
+    const createVersionChanged = ambiguousCreate !== null && recoveryReception !== null &&
+        'updatedAt' in recoveryReception && recoveryReception.updatedAt !== ambiguousCreate.body['expectedUpdatedAt'];
     const finish = () => { setMode(null); onEditing(false); setValidation(false); };
     const begin = (next: 'checklist' | 'damages') => {
         if (blocked || conflict || ambiguousCreate !== null || mode !== null) return;
         setMode(next); onEditing(true); setValidation(false); setConflict(false); setRecovered(false); setRecoveryFailure(null);
     };
-    const refresh = async (attempt = ambiguousCreate) => {
-        setRecovered(false); setReviewed(false);
+    const refresh = async () => {
+        setRecovered(false); setReviewed(false); setRecoveryReception(null);
         const result = await api.detail(reception.receptionId);
         if (signal.aborted) return;
         if (result.ok) {
-            onChange(result.data); setRecovered(true); setRecoveryFailure(null);
-            if (attempt !== null) {
-                const canonical = reconciledDamage(attempt, result.data);
-                if (canonical !== null) {
-                    setDamage({ ...canonical, description: canonical.description ?? '' });
-                    setAmbiguousCreate(null);
-                }
-            }
+            onChange(result.data); setRecoveryReception(result.data); setRecovered(true); setRecoveryFailure(null);
             if (result.data.status !== 'open') onLock();
         } else { setRecoveryFailure(result.failure); action.observeFailure(result.failure); }
     };
     const confirmed = (data: ReceptionDetail) => {
         onChange(data); setAmbiguousCreate(null); setConflict(false); setRecoveryFailure(null);
+        setRecoveryReception(null); setRecovered(false); setReviewed(false);
         onRecoveryPending(false); finish();
     };
     const recover = async (error: ApiFailure, attempt: CreateAttempt | null) => {
@@ -76,7 +61,7 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
             setConflict(true); setRecovered(false); setReviewed(false); onRecoveryPending(true);
             if (attempt !== null && ambiguous(error)) setAmbiguousCreate(attempt);
             if (error.code === 'RECEPTION_NOT_EDITABLE') onLock();
-            await refresh(attempt);
+            await refresh();
         }
     };
     const save = () => {
@@ -94,16 +79,28 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
             const entry: DamageCreate = { operation: 'create', zoneCode, damageType, severity: damage.severity, description };
             body = { expectedUpdatedAt: reception.updatedAt, damages: [damage.damageId === null ? entry :
                 { ...entry, operation: 'update', damageId: damage.damageId }] };
-            if (damage.damageId === null) attempt = { body, entry, baseline: reception };
+            if (damage.damageId === null) attempt = { body };
         }
         setValidation(false);
         void action.run(() => mode === 'checklist' ? api.patchChecklist(reception.receptionId, body) : api.patchDamages(reception.receptionId, body),
             confirmed, error => recover(error, ambiguous(error) ? attempt : null));
     };
     const retryCreate = () => {
-        if (blocked || !recovered || !reviewed || ambiguousCreate === null) return;
+        if (blocked || !recovered || !reviewed || !createVersionUnchanged) return;
         const attempt = ambiguousCreate;
         void action.run(() => api.patchDamages(reception.receptionId, attempt.body), confirmed, error => recover(error, attempt));
+    };
+    const associateDamage = (damageId: string) => {
+        if (blocked || !recovered || !createVersionChanged) return;
+        const canonical = recoveryReception.damages.find(item => item.damageId === damageId);
+        if (canonical === undefined) return;
+        // Serialize this explicit local decision with the other reception actions.
+        // Selection preserves the server snapshot and performs no HTTP mutation.
+        void action.run(() => Promise.resolve({ ok: true as const, data: canonical }), item => {
+            setDamage({ damageId: item.damageId, zoneCode: item.zoneCode, damageType: item.damageType,
+                severity: item.severity, description: item.description ?? '' });
+            confirmed(recoveryReception);
+        });
     };
     return <div className="reception-inspection">
         <section className="reception-evidence" aria-labelledby="checklist-heading"><h2 id="checklist-heading">Checklist</h2>
@@ -149,13 +146,26 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
         </form>}
         <RequestReference failure={action.failure}/><RequestReference failure={recoveryFailure}/>
         {conflict && <div role="alert"><p>La recepción cambió o no se pudo confirmar el guardado. Conservamos tus datos. Revisa el checklist y los daños actuales antes de volver a guardar.</p>
-            {recovered && editable && !reviewed && <button type="button" disabled={blocked} onClick={() => {
+            {recovered && editable && !reviewed && (ambiguousCreate === null || createVersionUnchanged) && <button type="button" disabled={blocked} onClick={() => {
                 setReviewed(true);
                 if (ambiguousCreate === null) { setConflict(false); onRecoveryPending(false); }
             }}>He revisado la inspección actual</button>}
             {(!recovered || ambiguousCreate !== null) && <button type="button" disabled={unavailable || action.blocked} onClick={() => { void action.run(async () => { await refresh(); return { ok: true, data: null }; }, () => undefined); }}>Volver a consultar inspección</button>}
-            {ambiguousCreate !== null && <><p>No se ha confirmado el daño. El reintento conserva los datos y la versión originales.</p>
-                <button type="button" disabled={blocked || !recovered || !reviewed} onClick={retryCreate}>Reintentar el daño original</button></>}
+            {ambiguousCreate !== null && <><p>No pudimos confirmar si este daño se registró. La recuperación sigue pendiente aunque salgas del editor.</p>
+                {createVersionUnchanged && <><p>La versión no cambió. Puedes reintentar con los datos y la versión originales.</p>
+                    <button type="button" disabled={blocked || !recovered || !reviewed} onClick={retryCreate}>Reintentar el daño original</button></>}
+                {recovered && createVersionChanged && <section className="reception-evidence" aria-label="Asociación explícita de daño">
+                    <p>La recepción cambió. Revisa los daños actuales y elige uno sólo si puedes identificarlo como el registrado. Elegirlo no modifica sus datos; cualquier cambio requiere una nueva edición.</p>
+                    {recoveryReception.damages.length === 0 ? <p>No hay daños actuales que puedas asociar. La recuperación continúa pendiente.</p> :
+                        <ul className="reception-list">{recoveryReception.damages.map(item => <li key={item.damageId}>
+                            <dl><dt>ID del daño</dt><dd><code>{item.damageId}</code></dd><dt>Zona</dt><dd>{item.zoneCode}</dd>
+                                <dt>Tipo</dt><dd>{item.damageType}</dd><dt>Severidad</dt><dd>{DAMAGE_SEVERITIES[item.severity]}</dd>
+                                <dt>Descripción</dt><dd className="reception-text">{item.description ?? 'Sin descripción'}</dd></dl>
+                            <button type="button" disabled={blocked} aria-label={'Usar este daño como el registrado: ' + item.damageId}
+                                onClick={() => { associateDamage(item.damageId); }}>Usar este daño como el registrado</button>
+                        </li>)}</ul>}
+                </section>}
+            </>}
         </div>}
     </div>;
 }

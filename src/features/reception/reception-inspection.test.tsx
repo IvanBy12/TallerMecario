@@ -206,12 +206,12 @@ describe('inspection recovery boundaries', () => {
         const h = renderReception(route, call => call.init.method === 'PATCH' ? Promise.reject(new Error('lost PATCH response')) : (lookups++, jsonResponse({ reception: { ...initial, updatedAt: lookups === 1 ? TIME : NEXT } })));
         await screen.findByRole('button', { name: 'Agregar daño' }); click('Agregar daño');
         change('Zona', 'rear'); change('Tipo de daño', 'dent'); click('Guardar daño');
-        await screen.findByRole('button', { name: 'He revisado la inspección actual' });
+        await screen.findByRole('region', { name: 'Asociación explícita de daño' });
         expect(patches(h.calls)).toHaveLength(1); expect(lookups).toBe(2);
         expect(screen.getByLabelText<HTMLInputElement>('Zona').value).toBe('rear');
         expect(screen.getByRole('button', { name: 'Guardar daño' }).hasAttribute('disabled')).toBe(true);
     });
-    it('adopts the unique canonical damage after an applied create loses its response; review never recreates with a fresh OCC', async () => {
+    it('requires explicit association even for a single new exact match; selection does not PATCH and later editing uses its canonical ID', async () => {
         let current: ReceptionDetail = initial;
         const created = { ...DAMAGE, damageId: IDS.vehicle, zoneCode: 'rear', damageType: 'dent', description: 'Golpe' };
         const h = renderReception(route, call => {
@@ -225,13 +225,24 @@ describe('inspection recovery boundaries', () => {
         });
         await screen.findByRole('button', { name: 'Agregar daño' }); click('Agregar daño');
         change('Zona', ' rear '); change('Tipo de daño', 'dent'); change('Descripción opcional', ' Golpe '); click('Guardar daño');
-        await screen.findByRole('button', { name: 'He revisado la inspección actual' });
+        const choose = await screen.findByRole('button', { name: 'Usar este daño como el registrado: ' + created.damageId });
         expect(patches(h.calls)).toHaveLength(1);
-        expect(screen.getByText('Editar daño existente')).toBeDefined();
+        expect(screen.getByText('Nuevo daño')).toBeDefined();
+        expect(screen.queryByRole('button', { name: 'He revisado la inspección actual' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Reintentar el daño original' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(true);
         click('Guardar daño'); expect(patches(h.calls)).toHaveLength(1);
-        click('He revisado la inspección actual'); click('Guardar daño');
+        fireEvent.click(choose); fireEvent.click(choose);
+        await waitFor(() => { expect(screen.queryByRole('region', { name: 'Asociación explícita de daño' })).toBeNull(); });
+        expect(patches(h.calls)).toHaveLength(1);
+        expect(screen.queryByRole('form', { name: 'Edición de daño' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(false);
+        click('Editar daño rear · dent');
+        expect(screen.getByLabelText<HTMLInputElement>('Zona').value).toBe(created.zoneCode);
+        expect(screen.getByLabelText<HTMLTextAreaElement>('Descripción opcional').value).toBe(created.description);
+        change('Severidad', 'severe'); click('Guardar daño');
         await waitFor(() => { expect(patches(h.calls)).toHaveLength(2); });
-        expect(payload(patches(h.calls)[1])).toEqual({ expectedUpdatedAt: NEXT, damages: [{ operation: 'update', damageId: created.damageId, zoneCode: 'rear', damageType: 'dent', severity: 'minor', description: 'Golpe' }] });
+        expect(payload(patches(h.calls)[1])).toEqual({ expectedUpdatedAt: NEXT, damages: [{ operation: 'update', damageId: created.damageId, zoneCode: 'rear', damageType: 'dent', severity: 'severe', description: 'Golpe' }] });
         expect(patches(h.calls).filter(call => {
             const entries = payload(call)['damages'];
             return Array.isArray(entries) && record(entries[0]) && entries[0]['operation'] === 'create';
@@ -248,6 +259,8 @@ describe('inspection recovery boundaries', () => {
         change('Zona', ' rear '); change('Tipo de daño', 'dent'); change('Severidad', 'severe'); change('Descripción opcional', ' Golpe '); click('Guardar daño');
         await screen.findByRole('button', { name: 'He revisado la inspección actual' });
         click('Reintentar el daño original'); expect(writes).toBe(1);
+        // Even an incidental draft change must not rebuild the preserved request.
+        change('Zona', 'different'); change('Descripción opcional', 'Otro borrador');
         click('Salir de inspección'); click('He revisado la inspección actual');
         expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(true);
         expect(screen.getByRole('button', { name: 'Agregar daño' }).hasAttribute('disabled')).toBe(true);
@@ -256,28 +269,70 @@ describe('inspection recovery boundaries', () => {
         expect(patches(h.calls)).toHaveLength(2);
         expect(payload(patches(h.calls)[0])).toEqual({ expectedUpdatedAt: TIME, damages: [{ operation: 'create', zoneCode: 'rear', damageType: 'dent', severity: 'severe', description: 'Golpe' }] });
         expect(payload(patches(h.calls)[1])).toEqual(payload(patches(h.calls)[0]));
+        expect(patches(h.calls)[1]?.init.body).toBe(patches(h.calls)[0]?.init.body);
         click('Editar daño rear · dent'); click('Guardar daño');
         await waitFor(() => { expect(patches(h.calls)).toHaveLength(3); });
         expect(payload(patches(h.calls)[2])).toMatchObject({ expectedUpdatedAt: NEXT, damages: [{ operation: 'update', damageId: created.damageId }] });
     });
-    it.each(['no match', 'multiple matches'] as const)('an ambiguous create with %s retains the original OCC after review and conflict on explicit retry', async scenario => {
+    it.each(['no match', 'one match', 'multiple matches'] as const)('a changed OCC with %s never auto-associates or enables another create after exiting', async scenario => {
         let writes = 0;
         const added = { ...DAMAGE, damageId: IDS.vehicle, zoneCode: 'rear', damageType: 'dent' };
         const h = renderReception(route, call => call.init.method === 'PATCH' ?
             ++writes === 1 ? Promise.reject(new Error('ambiguous')) : errorResponse('RESOURCE_VERSION_CONFLICT') :
-            jsonResponse({ reception: writes === 0 ? initial : { ...initial, updatedAt: NEXT, damages: scenario === 'no match' ? initial.damages : [...initial.damages, added, { ...added, damageId: IDS.customer }] } }));
+            jsonResponse({ reception: writes === 0 ? initial : { ...initial, updatedAt: NEXT, damages: scenario === 'no match' ? initial.damages :
+                [...initial.damages, added, ...(scenario === 'multiple matches' ? [{ ...added, damageId: IDS.customer }] : [])] } }));
         await screen.findByRole('button', { name: 'Agregar daño' }); click('Agregar daño');
         change('Zona', 'rear'); change('Tipo de daño', 'dent'); click('Guardar daño');
-        await screen.findByRole('button', { name: 'He revisado la inspección actual' });
-        click('He revisado la inspección actual'); click('Guardar daño'); expect(writes).toBe(1);
-        click('Reintentar el daño original');
-        await screen.findByRole('button', { name: 'He revisado la inspección actual' });
-        expect(patches(h.calls)).toHaveLength(2);
-        expect(payload(patches(h.calls)[1])).toEqual(payload(patches(h.calls)[0]));
-        expect(payload(patches(h.calls)[1])['expectedUpdatedAt']).toBe(TIME);
-        click('Salir de inspección'); click('He revisado la inspección actual');
+        await screen.findByRole('region', { name: 'Asociación explícita de daño' });
+        expect(screen.getByText('Nuevo daño')).toBeDefined();
+        expect(screen.queryByRole('button', { name: 'He revisado la inspección actual' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Reintentar el daño original' })).toBeNull();
+        click('Guardar daño'); expect(writes).toBe(1);
+        click('Salir de inspección');
         expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(true);
         expect(screen.getByRole('button', { name: 'Agregar daño' }).hasAttribute('disabled')).toBe(true);
+        expect(patches(h.calls)).toHaveLength(1);
+    });
+    it('lets the user choose a specific candidate and preserves its server data instead of the original draft', async () => {
+        let writes = 0;
+        const first = { ...DAMAGE, damageId: IDS.vehicle, zoneCode: 'rear', damageType: 'dent', description: 'Primero' };
+        const selected = { ...first, damageId: IDS.customer, zoneCode: 'left', severity: 'moderate' as const, description: 'Segundo, confirmado en servidor' };
+        const canonical = { ...initial, updatedAt: NEXT, damages: [...initial.damages, first, selected] };
+        const h = renderReception(route, call => call.init.method === 'PATCH' ?
+            ++writes === 1 ? Promise.reject(new Error('ambiguous')) : jsonResponse({ reception: canonical }) :
+            jsonResponse({ reception: writes === 0 ? initial : canonical }));
+        await screen.findByRole('button', { name: 'Agregar daño' }); click('Agregar daño');
+        change('Zona', 'rear'); change('Tipo de daño', 'dent'); change('Descripción opcional', 'Mi borrador'); click('Guardar daño');
+        const region = await screen.findByRole('region', { name: 'Asociación explícita de daño' });
+        expect(within(region).getAllByRole('button', { name: /Usar este daño como el registrado:/ })).toHaveLength(3);
+        expect(within(region).getByText(selected.damageId)).toBeDefined();
+        expect(within(region).getByText(selected.description)).toBeDefined();
+        click('Usar este daño como el registrado: ' + selected.damageId);
+        await waitFor(() => { expect(screen.queryByRole('form', { name: 'Edición de daño' })).toBeNull(); });
+        expect(patches(h.calls)).toHaveLength(1);
+        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(false);
+        click('Editar daño left · dent');
+        expect(screen.getByLabelText<HTMLInputElement>('Zona').value).toBe(selected.zoneCode);
+        expect(screen.getByLabelText<HTMLSelectElement>('Severidad').value).toBe(selected.severity);
+        expect(screen.getByLabelText<HTMLTextAreaElement>('Descripción opcional').value).toBe(selected.description);
+        change('Descripción opcional', 'Edición posterior explícita'); click('Guardar daño');
+        await waitFor(() => { expect(patches(h.calls)).toHaveLength(2); });
+        expect(payload(patches(h.calls)[1])).toEqual({ expectedUpdatedAt: NEXT, damages: [{ operation: 'update', damageId: selected.damageId,
+            zoneCode: selected.zoneCode, damageType: selected.damageType, severity: selected.severity, description: 'Edición posterior explícita' }] });
+    });
+    it('keeps recovery pending when a changed version has no existing damage to associate', async () => {
+        let writes = 0;
+        const h = renderReception(route, call => call.init.method === 'PATCH' ? (writes++, Promise.reject(new Error('ambiguous'))) :
+            jsonResponse({ reception: { ...DETAIL, updatedAt: writes === 0 ? TIME : NEXT } }));
+        await screen.findByRole('button', { name: 'Agregar daño' }); click('Agregar daño');
+        change('Zona', 'rear'); change('Tipo de daño', 'dent'); click('Guardar daño');
+        await screen.findByText('No hay daños actuales que puedas asociar. La recuperación continúa pendiente.');
+        expect(screen.queryByRole('button', { name: /Usar este daño como el registrado:/ })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Reintentar el daño original' })).toBeNull();
+        click('Salir de inspección');
+        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(true);
+        expect(screen.getByRole('button', { name: 'Agregar daño' }).hasAttribute('disabled')).toBe(true);
+        expect(patches(h.calls)).toHaveLength(1);
     });
     it.each([{ reception: { ...initial, receptionId: IDS.vehicle } }, { reception: TECH }, { reception: DETAIL, checklist: [] }, null])('rejects incomplete/foreign PATCH response %j', async response => {
         const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'test' }), fetchImpl: () => Promise.resolve(jsonResponse(response)) });

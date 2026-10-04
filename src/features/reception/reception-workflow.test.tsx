@@ -656,6 +656,51 @@ describe('runtime acceptance document', () => {
 });
 describe('shared inspection/signature/close coordination', () => {
     const checklist = { checkItemId: IDS.other, code: 'lights', label: 'Luces', status: 'ok' as const, notes: null, createdAt: TIME };
+    it.each([false, true])('another session creates an identical third damage; no auto-association and workflow remains blocked, signed=%s', async signed => {
+        const similar = { damageId: IDS.consent, zoneCode: 'rear', damageType: 'dent', severity: 'minor' as const, description: null, createdAt: TIME };
+        const otherExisting = { ...similar, damageId: IDS.membership };
+        const concurrent = { ...similar, damageId: IDS.vehicle };
+        current = { ...(signed ? SIGNED : DETAIL), damages: [similar, otherExisting] };
+        const h = renderReception(route, call => {
+            if (call.init.method === 'PATCH') {
+                // The other session consumes OCC=A; our conflict response is lost.
+                current = { ...current, updatedAt: '2026-10-04T12:13:14.654321Z', damages: [similar, otherExisting, concurrent] };
+                return Promise.reject(new Error('lost conflict response, original create never applied'));
+            }
+            return defaults(call);
+        }, permissions);
+        if (!signed) await prepare();
+        fireEvent.click(await screen.findByRole('button', { name: 'Agregar daño' }));
+        fireEvent.change(screen.getByLabelText('Zona'), { target: { value: similar.zoneCode } });
+        fireEvent.change(screen.getByLabelText('Tipo de daño'), { target: { value: similar.damageType } });
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar daño' }));
+        const candidate = await screen.findByRole('button', { name: 'Usar este daño como el registrado: ' + concurrent.damageId });
+        expect(screen.getByText('Nuevo daño')).toBeDefined();
+        expect(screen.queryByText('Editar daño existente')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'He revisado la inspección actual' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Reintentar el daño original' })).toBeNull();
+        const blockedWorkflow = () => {
+            const button = screen.getByRole('button', { name: signed ? 'Cerrar recepción' : 'Registrar firma' });
+            expect(button.hasAttribute('disabled')).toBe(true); fireEvent.click(button);
+            for (const name of ['Editar recepción', 'Agregar daño', 'Agregar elemento de checklist']) {
+                expect(screen.getByRole('button', { name }).hasAttribute('disabled')).toBe(true);
+            }
+            expect(screen.queryByRole('dialog')).toBeNull();
+            expect(h.calls.filter(call => call.init.method === 'PATCH')).toHaveLength(1);
+            expect(h.calls.some(call => call.init.method === 'POST')).toBe(false);
+        };
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar daño' })); blockedWorkflow();
+        fireEvent.click(screen.getByRole('button', { name: 'Salir de inspección' })); blockedWorkflow();
+        fireEvent.click(screen.getByRole('button', { name: 'Volver a consultar inspección' }));
+        await waitFor(() => { expect(screen.getByRole('button', { name: candidate.getAttribute('aria-label') ?? '' }).hasAttribute('disabled')).toBe(false); });
+        blockedWorkflow();
+        fireEvent.click(screen.getByRole('button', { name: 'Usar este daño como el registrado: ' + concurrent.damageId }));
+        await waitFor(() => { expect(screen.queryByRole('region', { name: 'Asociación explícita de daño' })).toBeNull(); });
+        expect(screen.getByRole('button', { name: signed ? 'Cerrar recepción' : 'Registrar firma' }).hasAttribute('disabled')).toBe(false);
+        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(false);
+        expect(h.calls.filter(call => call.init.method === 'PATCH')).toHaveLength(1);
+        expect(h.calls.some(call => call.init.method === 'POST')).toBe(false);
+    });
     it.each([
         { signed: true, failure: 'conflict' }, { signed: false, failure: 'conflict' },
         { signed: true, failure: 'network' }, { signed: false, failure: 'network' },
