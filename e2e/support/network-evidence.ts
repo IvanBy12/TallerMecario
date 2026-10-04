@@ -37,15 +37,43 @@ export interface ObservedExchange {
 
 const UUID_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const UUID_ANYWHERE = new RegExp(UUID_SOURCE, 'gi');
-const UUID_EXACT = new RegExp(`^${UUID_SOURCE}$`, 'i');
+/** UUID RFC 9562 (versión 1–8, variante 10xx). Rechaza por construcción NIL (versión 0) y MAX (versión f). */
+const UUID_STRICT = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_NIL = '00000000-0000-0000-0000-000000000000';
+const UUID_MAX = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+/** Timestamp UTC estricto: termina en `Z`, fracción opcional de 1–6 dígitos (el parser productivo tolera 0–6). */
+const UTC_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?Z$/;
 const COMPLETE_PATH = new RegExp(`^/api/v1/media/upload-sessions/(${UUID_SOURCE})/complete$`, 'i');
 const SIGNATURE_PATH = new RegExp(`^/api/v1/receptions/(${UUID_SOURCE})/signature$`, 'i');
 const UPLOAD_SESSIONS_ROUTE = '/api/v1/media/upload-sessions';
+const ACCEPTANCE_DOCUMENT_ROUTE = '/api/v1/reception-acceptance-document';
+/** Única versión contractual publicada del documento de aceptación (docs/S3-05-reception-signature.md). */
+export const RECEPTION_ACCEPTANCE_VERSION = 'reception_acceptance_es-CO_v1';
 export const OBJECT_STORAGE_ROUTE = '(PUT firmado a almacenamiento de objetos; URL omitida)';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-const uuidOf = (value: unknown): string | null => (typeof value === 'string' && UUID_EXACT.test(value) ? value.toLowerCase() : null);
+/** UUID estricto de evidencia (minúsculas) o null: no UUID, NIL y MAX se rechazan. */
+export function evidenceUuidOf(value: unknown): string | null {
+  if (typeof value !== 'string' || !UUID_STRICT.test(value)) return null;
+  const id = value.toLowerCase();
+  return id === UUID_NIL || id === UUID_MAX ? null : id;
+}
+const uuidOf = evidenceUuidOf;
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+const isLeapYear = (year: number): boolean => (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+const daysInMonth = (year: number, month: number): number => (month === 2 ? (isLeapYear(year) ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31);
+
+/**
+ * Timestamp ISO UTC estricto: componentes de un instante calendario real (rechaza 2026-02-30 y mes 13, que `Date.parse`
+ * normalizaría), terminado exactamente en `Z` (sin offset ni hora sin zona). No depende de `Date.parse`.
+ */
+export function isStrictUtcTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const match = UTC_TIMESTAMP.exec(value);
+  if (match === null) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month) && hour <= 23 && minute <= 59 && second <= 59;
+}
 const isoTime = (value: unknown): value is string => nonEmpty(value) && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value));
 const ok = (entry: { readonly status: number }): boolean => entry.status >= 200 && entry.status < 300;
 
@@ -111,7 +139,8 @@ export interface SignatureEnvelope {
 /**
  * Respuesta contractual de `POST /receptions/:id/signature`:
  * `{ signature: { signatureId, receptionId, signatureMediaId, documentVersion, signedAt } }`.
- * Una raíz distinta (p. ej. `{ signatureId }`) o una `signature` incompleta NO es evidencia.
+ * Una raíz distinta (p. ej. `{ signatureId }`), una `signature` incompleta, ids NIL/MAX, una versión que no sea la contractual
+ * (`RECEPTION_ACCEPTANCE_VERSION`) o un `signedAt` que no sea un instante UTC real terminado en `Z` NO es evidencia.
  */
 export function parseSignatureEnvelope(body: unknown): SignatureEnvelope | null {
   if (!isRecord(body)) return null;
@@ -124,7 +153,15 @@ export function parseSignatureEnvelope(body: unknown): SignatureEnvelope | null 
   const signatureMediaId = uuidOf(signature['signatureMediaId']);
   const documentVersion = signature['documentVersion'];
   const signedAt = signature['signedAt'];
-  if (signatureId === null || receptionId === null || signatureMediaId === null || !nonEmpty(documentVersion) || !isoTime(signedAt)) return null;
+  if (
+    signatureId === null ||
+    receptionId === null ||
+    signatureMediaId === null ||
+    documentVersion !== RECEPTION_ACCEPTANCE_VERSION ||
+    !isStrictUtcTimestamp(signedAt)
+  ) {
+    return null;
+  }
   return { signatureId, receptionId, signatureMediaId, documentVersion, signedAt };
 }
 
@@ -132,7 +169,15 @@ type Correlation =
   | { readonly type: 'create'; readonly session: UploadSessionEnvelope }
   | { readonly type: 'put'; readonly origin: string; readonly pathname: string }
   | { readonly type: 'complete'; readonly uploadSessionId: string; readonly mediaAssetId: string }
-  | { readonly type: 'attach'; readonly pathReceptionId: string; readonly requestMediaId: string | null; readonly signature: SignatureEnvelope | null };
+  | { readonly type: 'acceptance'; readonly documentVersion: string }
+  | {
+      readonly type: 'attach';
+      readonly pathReceptionId: string;
+      readonly requestMediaId: string | null;
+      /** `documentVersion` enviado en el attach (solo la versión, nunca el texto de aceptación). */
+      readonly requestDocumentVersion: string | null;
+      readonly signature: SignatureEnvelope | null;
+    };
 
 interface Observation {
   readonly entry: EvidenceEntry;
@@ -155,8 +200,15 @@ const FLOW_LINKS = [
   'creación de upload session (envelope contractual)',
   'PUT a R2 correlacionado (mismo origen y ruta que la uploadUrl devuelta, estado 2xx)',
   'complete del mismo uploadSessionId/mediaAssetId (media activa)',
-  'attach de firma con el mismo mediaAssetId y la recepción esperada (envelope { signature })',
+  'attach de firma con el mismo mediaAssetId, la recepción esperada y la documentVersion contractual enviada (envelope { signature })',
 ] as const;
+
+/** Si se observó el documento de aceptación real antes del attach, su versión debe ser la enviada en el attach. */
+function acceptedVersionAgrees(items: readonly Observation[], attachSeq: number, version: string): boolean {
+  const published = items.filter(({ entry, correlation }) => correlation?.type === 'acceptance' && entry.seq < attachSeq);
+  const latest = published[published.length - 1]?.correlation;
+  return latest?.type !== 'acceptance' || latest.documentVersion === version;
+}
 
 export class NetworkEvidence {
   /** Evidencia sanitizada (única parte persistible), ordenada por llegada. */
@@ -213,8 +265,14 @@ export class NetworkEvidence {
     exchange: ObservedExchange,
   ): { facts: Record<string, boolean | string | number>; correlation: Correlation | null } {
     const none = { facts: {}, correlation: null };
-    if (method !== 'POST' || !ok(exchange)) return none;
+    if (!ok(exchange)) return none;
     const body = exchange.responseBody;
+    if (method === 'GET' && route === ACCEPTANCE_DOCUMENT_ROUTE) {
+      const document = isRecord(body) ? body['acceptanceDocument'] : null;
+      const version = isRecord(document) ? document['documentVersion'] : null;
+      return { facts: {}, correlation: nonEmpty(version) ? { type: 'acceptance', documentVersion: version } : null };
+    }
+    if (method !== 'POST') return none;
     if (route === UPLOAD_SESSIONS_ROUTE) {
       const session = parseUploadSessionEnvelope(body);
       return {
@@ -236,16 +294,18 @@ export class NetworkEvidence {
     if (attach !== null) {
       const signature = parseSignatureEnvelope(body);
       const pathReceptionId = uuidOf(attach[1]);
-      const requestMediaId = isRecord(exchange.requestBody) ? uuidOf(exchange.requestBody['signatureMediaId']) : null;
+      const request = isRecord(exchange.requestBody) ? exchange.requestBody : {};
+      const requestMediaId = uuidOf(request['signatureMediaId']);
+      const requestDocumentVersion = nonEmpty(request['documentVersion']) ? request['documentVersion'] : null;
       return {
         facts: { returnedSignatureId: signature !== null },
-        correlation: pathReceptionId === null ? null : { type: 'attach', pathReceptionId, requestMediaId, signature },
+        correlation: pathReceptionId === null ? null : { type: 'attach', pathReceptionId, requestMediaId, requestDocumentVersion, signature },
       };
     }
     return none;
   }
 
-  /** Adaptador de Playwright: lee los cuerpos JSON solo de los POST al API y delega en `observe`. */
+  /** Adaptador de Playwright: lee los cuerpos JSON solo de los POST al API (y del GET del documento de aceptación) y delega en `observe`. */
   async capture(response: Response): Promise<void> {
     const request = response.request();
     const method = request.method();
@@ -253,9 +313,11 @@ export class NetworkEvidence {
     const seq = this.nextSeq();
     let requestBody: unknown = null;
     let responseBody: unknown = null;
-    if (method === 'POST' && response.url().startsWith(`${this.apiOrigin}/api/v1/`)) {
+    const isApi = response.url().startsWith(`${this.apiOrigin}/api/v1/`);
+    const isAcceptanceRead = method === 'GET' && isApi && new URL(response.url()).pathname === ACCEPTANCE_DOCUMENT_ROUTE;
+    if ((method === 'POST' && isApi) || isAcceptanceRead) {
       try {
-        requestBody = JSON.parse(request.postData() ?? 'null');
+        requestBody = method === 'POST' ? JSON.parse(request.postData() ?? 'null') : null;
       } catch {
         requestBody = null;
       }
@@ -324,9 +386,12 @@ export class NetworkEvidence {
           entry.seq > complete.entry.seq &&
           correlation.pathReceptionId === receptionId &&
           correlation.requestMediaId === create.session.mediaAssetId &&
+          correlation.requestDocumentVersion === RECEPTION_ACCEPTANCE_VERSION &&
           correlation.signature !== null &&
           correlation.signature.receptionId === receptionId &&
-          correlation.signature.signatureMediaId === create.session.mediaAssetId,
+          correlation.signature.signatureMediaId === create.session.mediaAssetId &&
+          correlation.signature.documentVersion === correlation.requestDocumentVersion &&
+          acceptedVersionAgrees(items, entry.seq, correlation.requestDocumentVersion),
       );
       if (attach === undefined) continue;
       return {
