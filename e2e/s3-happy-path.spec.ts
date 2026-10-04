@@ -4,6 +4,7 @@ import { expect, test } from '@playwright/test';
 
 import { field, probeApi } from './support/api-probe';
 import { e2eEnv, newRunId, STATE_FILES } from './support/env';
+import { assertMobileRuntime } from './support/mobile-runtime';
 import { recordNetwork, signatureFlowOf, type SignatureFlowSummary } from './support/network-evidence';
 import {
   closeReception,
@@ -44,8 +45,10 @@ function closedRun(): RunState {
 
 test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección → firma real → cierre → orden', async ({ page }, testInfo) => {
   const env = e2eEnv();
-  const touch = testInfo.project.use.hasTouch === true;
-  const fixture = runFixture(newRunId(), env.vehiclePlate);
+  // El gate es móvil y táctil: la configuración del proyecto lo exige y el navegador lo confirma en runtime (más abajo).
+  expect(testInfo.project.use.hasTouch, 'el proyecto del gate debe ser táctil').toBe(true);
+  expect(testInfo.project.use.isMobile, 'el proyecto del gate debe ser móvil').toBe(true);
+  const fixture = runFixture(newRunId());
   const intake = intakeFor(fixture.runId);
   const inspection = inspectionFor(fixture.runId);
   const evidence = recordNetwork(page, env.apiOrigin);
@@ -55,6 +58,7 @@ test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección
   await test.step('sesión real y contexto del taller activo', async () => {
     await page.goto('/panel');
     await expect(page.locator('main#contenido-principal')).toBeVisible({ timeout: 60_000 });
+    await assertMobileRuntime(page);
     const context = await probeApi(page, env.apiOrigin, { method: 'GET', path: '/api/v1/me/context', tenantId: env.tenantId });
     expect(context.status).toBe(200);
     expect(field(context.json, 'context', 'tenantId')).toBe(env.tenantId);
@@ -82,10 +86,12 @@ test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección
   });
 
   await test.step('firma: documento de aceptación real → sesión de subida → PUT R2 → complete → attach', async () => {
-    await registerSignature(page, `Firmante E2E ${fixture.runId}`, touch);
+    await registerSignature(page, `Firmante E2E ${fixture.runId}`);
   });
 
-  const signatureFlow = signatureFlowOf(evidence);
+  // La cadena debe estar CORRELACIONADA: mismo uploadSessionId/mediaAssetId, PUT al origen y ruta de la uploadUrl y attach en esta recepción.
+  await evidence.settled();
+  const signatureFlow = signatureFlowOf(evidence, { receptionId });
 
   let orderNumber = '';
   await test.step('cierre: confirmar diálogo → recepción cerrada → orden generada', async () => {

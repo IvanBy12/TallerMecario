@@ -3,6 +3,8 @@ import { expect, test } from '@playwright/test';
 import { field, probeApi, type ProbeResponse } from './support/api-probe';
 import { expectWorkshopShell } from './support/clerk-login';
 import { e2eEnv, STATE_FILES } from './support/env';
+import { exhaustPages } from './support/pagination';
+import { assertMobileRuntime } from './support/mobile-runtime';
 import { openPersona } from './support/persona';
 
 /**
@@ -14,6 +16,8 @@ import { openPersona } from './support/persona';
 test.use({ storageState: STATE_FILES.advisor });
 
 const ERROR_ENVELOPE_KEYS = ['error'];
+/** Tope de seguridad contra bucles: alcanzarlo con un cursor pendiente FALLA la prueba (nunca la aprueba). */
+const MAX_LIST_PAGES = 100;
 
 function expectOnlyErrorEnvelope(response: ProbeResponse): void {
   expect(response.json !== null && typeof response.json === 'object' ? Object.keys(response.json) : null).toEqual(ERROR_ENVELOPE_KEYS);
@@ -41,6 +45,7 @@ test('E2E-05 cross-tenant: el asesor de A no accede ni obtiene datos de la recep
 
   await page.goto('/panel');
   await expectWorkshopShell(page);
+  await assertMobileRuntime(page);
 
   await test.step('precondición: el usuario de A no es miembro de B', async () => {
     const me = await probeApi(page, env.apiOrigin, { method: 'GET', path: '/api/v1/me', tenantId: env.tenantId });
@@ -89,19 +94,17 @@ test('E2E-05 cross-tenant: el asesor de A no accede ni obtiene datos de la recep
     expectOnlyErrorEnvelope(patch);
   });
 
-  await test.step('el listado de A no contiene la recepción de B', async () => {
-    let cursor: string | null = null;
-    for (let pageNumber = 0; pageNumber < 20; pageNumber += 1) {
+  await test.step('el listado de A (agotado hasta nextCursor === null) no contiene la recepción de B', async () => {
+    // Agotar la paginación es parte de la prueba: con un cursor pendiente no se puede afirmar aislamiento (exhaustPages falla).
+    const { items } = await exhaustPages<unknown>(async (cursor) => {
       const query = cursor === null ? '?limit=25' : `?limit=25&cursor=${encodeURIComponent(cursor)}`;
       const list = await probeApi(page, env.apiOrigin, { method: 'GET', path: `/api/v1/receptions${query}`, tenantId: env.tenantId });
-      expect(list.status).toBe(200);
+      expect(list.status, 'GET /api/v1/receptions').toBe(200);
       const receptions = field(list.json, 'receptions');
       expect(Array.isArray(receptions)).toBe(true);
-      expect((receptions as unknown[]).map((item) => field(item, 'receptionId'))).not.toContain(env.tenantBReceptionId);
-      const next = field(list.json, 'nextCursor');
-      if (typeof next !== 'string') break;
-      cursor = next;
-    }
+      return { items: (receptions as unknown[]).map((item) => field(item, 'receptionId')), nextCursor: field(list.json, 'nextCursor') };
+    }, MAX_LIST_PAGES);
+    expect(items).not.toContain(env.tenantBReceptionId);
   });
 
   await test.step('el recurso de B sigue intacto para B', async () => {

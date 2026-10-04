@@ -2,6 +2,7 @@ import fs from 'node:fs';
 
 import { defineConfig } from '@playwright/test';
 
+import { ARTIFACT_POLICY } from './e2e/support/artifact-policy';
 import { DESKTOP_DEVICE, MOBILE_DEVICE } from './e2e/support/devices';
 import { STATE_FILES } from './e2e/support/env';
 
@@ -29,24 +30,25 @@ export default defineConfig({
   forbidOnly: process.env['CI'] !== undefined,
   timeout: 240_000,
   expect: { timeout: 20_000 },
-  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+  // En CI solo `list`: el reporte HTML de una corrida autenticada no se publica (ver docs/quality/s3-mobile-e2e.md).
+  // En local se genera además el HTML; el harness demuestra con credenciales sintéticas que no contiene secretos.
+  reporter:
+    process.env['CI'] === undefined
+      ? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
+      : [['list']],
   use: {
     baseURL,
     actionTimeout: 20_000,
     navigationTimeout: 45_000,
-    // Sin trace ni video: registran cabeceras Authorization/cookies y las URL firmadas de R2.
-    // La evidencia técnica sale de e2e/support/network-evidence.ts, que solo guarda método, ruta con IDs
-    // enmascarados y estado HTTP. Las capturas son solo ante fallo.
-    trace: 'off',
-    video: 'off',
-    screenshot: 'only-on-failure',
+    // Política de artefactos compartida con el harness (e2e/support/artifact-policy.ts): trace, screenshot y video SIEMPRE
+    // en off. Registran cabeceras Authorization/cookies, URL firmadas de R2 y el formulario de login. La evidencia técnica
+    // sale de e2e/support/network-evidence.ts, que solo guarda método, ruta con IDs enmascarados y estado HTTP.
+    ...ARTIFACT_POLICY,
   },
   projects: [
     {
       name: 'setup',
       testMatch: /auth\.setup\.ts/,
-      // El formulario de login contiene el correo y la contraseña tecleados: nunca se captura.
-      use: { screenshot: 'off' },
     },
     {
       name: 'mobile-chromium',

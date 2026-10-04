@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test';
 import { field, probeApi } from './support/api-probe';
 import { expectWorkshopShell } from './support/clerk-login';
 import { e2eEnv, newRunId, STATE_FILES } from './support/env';
+import { assertMobileRuntime } from './support/mobile-runtime';
 import { openPersona } from './support/persona';
 import { createReceptionViaUi, intakeFor, runFixture } from './support/reception-flow';
 
@@ -19,13 +20,14 @@ test.use({ storageState: STATE_FILES.advisor });
 
 test('E2E-04 RBAC: el técnico recibe 403 PERMISSION_DENIED y la recepción abierta no se modifica', async ({ page, browser }, testInfo) => {
   const env = e2eEnv();
-  const fixture = runFixture(newRunId(), env.vehiclePlate);
+  const fixture = runFixture(newRunId());
   const path = (suffix = '') => `/api/v1/receptions/${receptionId}${suffix}`;
   let receptionId = '';
   let snapshot: unknown;
 
   await test.step('el asesor abre una recepción real por la UI', async () => {
     ({ receptionId } = await createReceptionViaUi(page, fixture, intakeFor(fixture.runId)));
+    await assertMobileRuntime(page);
     const detail = await probeApi(page, env.apiOrigin, { method: 'GET', path: path(), tenantId: env.tenantId });
     expect(detail.status).toBe(200);
     expect(field(detail.json, 'reception', 'status')).toBe('open');

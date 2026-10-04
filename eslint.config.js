@@ -128,7 +128,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['vite.config.ts', 'playwright.config.ts'],
+    files: ['vite.config.ts', 'playwright.config.ts', 'e2e-harness-tests/vitest.config.ts', 'e2e-harness-tests/browser/playwright.harness.config.ts'],
     rules: { 'no-restricted-exports': 'off' },
   },
   {

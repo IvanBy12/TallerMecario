@@ -8,6 +8,8 @@ no aprueba el gate: el gate se aprueba solo con una corrida real `mobile-chromiu
 
 | Campo | Valor |
 | --- | --- |
+| Estado del harness | **harness hardened** — endurecido tras la revisión adversarial (F1–F7) y probado sin credenciales con `npm run test:e2e:harness` |
+| Estado del ambiente real | **real environment pending** — ninguna corrida contra Clerk/backend/R2 reales; ningún caso en `PASS` |
 | Fecha de redacción | 2026-10-04 |
 | Rama / base | `task/s3-e2e-mobile` sobre `origin/main` `2340f235c0d0d50150216c3b60c9352a6af00ef2` |
 | Commit frontend | el commit de esta rama que contiene este archivo (`git log -1 -- docs/quality/s3-mobile-e2e.md`) |
@@ -24,12 +26,12 @@ UI real y cuál es verificación server-side.
 | Caso | Spec | Qué recorre | UI real | Servidor real | Estado |
 | --- | --- | --- | --- | --- | --- |
 | Setup | `e2e/auth.setup.ts` | Preflight de variables; login Clerk por UI de asesor A, técnico A y usuario B; valida `GET /me` y `GET /me/context` (permisos y una sola membership por persona) | Login en `<SignIn/>` | `/api/v1/me`, `/api/v1/me/context` | NOT_RUN |
-| E2E-01 | `e2e/s3-happy-path.spec.ts` | Login → taller activo → Recepciones → Nueva recepción → buscar placa → (crear cliente → crear vehículo → volver) → seleccionar → propietario → consentimiento `service_provision` + atestación de mayoría de edad → km / combustible / observaciones → crear → checklist (agregar y editar) y daño → recarga y persistencia → documento de aceptación real → nombre → lectura → firma dibujada con eventos táctiles reales → registrar → cerrar (diálogo) → «Orden #N» + «Generada correctamente» | Todo el flujo, incluido el trazo de la firma (CDP `Input.dispatchTouchEvent` → pointer events táctiles) | Todos los endpoints de recepción, consentimiento, CRM, media y cierre | NOT_RUN |
+| E2E-01 | `e2e/s3-happy-path.spec.ts` | Login → taller activo → Recepciones → Nueva recepción → buscar placa → (crear cliente → crear vehículo → volver) → seleccionar → propietario → consentimiento `service_provision` + atestación de mayoría de edad → km / combustible / observaciones → crear → checklist (agregar y editar) y daño → recarga y persistencia → documento de aceptación real → nombre → lectura → firma dibujada con eventos táctiles reales (solo `touch`; sin rama de ratón) → **píxeles del canvas inspeccionados: tinta real** → registrar → cerrar (diálogo) → «Orden #N» + «Generada correctamente» | Todo el flujo, incluido el trazo de la firma (CDP `Input.dispatchTouchEvent` → pointer events táctiles) y la comprobación en runtime `navigator.maxTouchPoints > 0` + viewport móvil | Todos los endpoints de recepción, consentimiento, CRM, media y cierre | NOT_RUN |
 | E2E-02 | ídem | Recarga: sigue `Cerrada`, mismo `Orden #N`, sin botón «Cerrar recepción». `POST /receptions/:id/close` reintentado con la sesión del asesor → 200 con el mismo `serviceOrder.id`/`orderNumber`; detalle idéntico antes y después | Estado tras recarga | Reintento real de close (endpoint existente §5.8; el backend lo prueba como «retry is read-only») | NOT_RUN |
 | E2E-03 | ídem | Estado inicial de la orden visible (`Estado: Recepción`) | Estado de la orden | `serviceOrder.status = reception` en el detalle. **El historial (`order_status_history`) NO es observable por HTTP/UI en Sprint 3** | NOT_RUN (parcial, ver «Historial») |
 | E2E-04 | `e2e/s3-rbac.spec.ts` | El asesor abre una recepción; una sesión real de técnico (sin `receptions.update_open`/`signatures.capture`/`receptions.close` tenant) intenta por UI y por HTTP: PATCH recepción/checklist/daños, GET documento de aceptación, POST firma, POST close, POST crear → todos deben dar **403 `PERMISSION_DENIED`**; después el asesor comprueba que la recepción es idéntica y sigue abierta, sin firma ni orden | Ausencia de acciones; mensajes de permiso | Estado y código de las 7 operaciones + inmutabilidad | NOT_RUN |
-| E2E-05 | `e2e/s3-cross-tenant.spec.ts` | Control: la sesión de B lee su recepción real (200). El asesor de A abre `/recepciones/<id de B>`: 404 `RECEPTION_NOT_FOUND`, sin datos ni campos de B. Peticiones reales con la sesión de A: GET con `X-Tenant-Id` A → 404; GET con `X-Tenant-Id` B → 403 de tenant; PATCH no destructivo (token de versión obsoleto) → 404; el listado de A no contiene el ID de B; el recurso de B queda intacto; centinela opcional ausente | Mensaje de recurso no encontrado, ausencia de datos | Estado/código/envelope de cada petición | NOT_RUN |
-| E2E-06 | `e2e/s3-happy-path.spec.ts` | Evidencia de red sanitizada del E2E-01: `POST /media/upload-sessions` → `PUT` a R2 → `POST …/complete` (media `active`) → `POST …/signature`, en ese orden; la firma persiste y se ve tras el cierre | Firma registrada | Los cuatro eventos con estado HTTP | NOT_RUN |
+| E2E-05 | `e2e/s3-cross-tenant.spec.ts` | Control: la sesión de B lee su recepción real (200). El asesor de A abre `/recepciones/<id de B>`: 404 `RECEPTION_NOT_FOUND`, sin datos ni campos de B. Peticiones reales con la sesión de A: GET con `X-Tenant-Id` A → 404; GET con `X-Tenant-Id` B → 403 de tenant; PATCH no destructivo (token de versión obsoleto) → 404; el listado de A, **agotado hasta `nextCursor === null`**, no contiene el ID de B (cursor pendiente tras el tope, cursor repetido o ciclo = FAIL); el recurso de B queda intacto; centinela opcional ausente | Mensaje de recurso no encontrado, ausencia de datos | Estado/código/envelope de cada petición | NOT_RUN |
+| E2E-06 | `e2e/s3-happy-path.spec.ts` | Evidencia de red sanitizada y **correlacionada** del E2E-01: `POST /media/upload-sessions` (uploadSessionId, mediaAssetId, uploadUrl) → `PUT` al **mismo origen y ruta** de esa uploadUrl con 2xx → `POST …/{uploadSessionId}/complete` (misma media `active`) → `POST /receptions/{id}/signature` con ese mediaAssetId y envelope `{ signature: {…} }`, en ese orden; la firma persiste y se ve tras el cierre | Firma registrada | Los cuatro eventos con estado HTTP | NOT_RUN |
 | Smoke escritorio | `e2e/desktop-smoke.spec.ts` | Sesión, Recepciones, pantalla de nueva recepción (solo lectura) | Sí | Lectura | NOT_RUN |
 
 Cobertura de los ítems de «Sprint 3 — Recepción» de `docs/quality/frontend-relevant-gates.md`: *Buscar placa*, *Crear cliente/vehículo si
@@ -68,6 +70,7 @@ conteo de filas en PostgreSQL es evidencia server-side (misma suite de backend).
 npm ci
 npx playwright install chromium
 cp .env.e2e.example .env.e2e        # completar valores en local; está en .gitignore
+npm run test:e2e:harness            # pruebas del propio harness (sin credenciales; requiere Chromium)
 npm run e2e:list                    # descubre los casos sin credenciales
 npm run e2e:mobile                  # gate principal (proyecto mobile-chromium; headless)
 npm run e2e:headed                  # igual, con navegador visible
@@ -94,17 +97,18 @@ Privadas del runner (nunca en Git; `.env.e2e.example` solo lista nombres):
 | `E2E_TENANT_B_RECEPTION_ID` | UUID de una recepción **real** de B |
 | `E2E_TENANT_B_SENTINEL` (opcional) | Texto distintivo de esa recepción para afirmar que no se filtra |
 | `E2E_VERIFICATION_CODE` (opcional) | Código de Clerk si el ambiente lo exige (usuarios `+clerk_test`) |
-| `E2E_VEHICLE_PLATE` (opcional) | Placa de un vehículo existente en A; si falta, cada corrida crea cliente y vehículo nuevos |
 | `E2E_BASE_URL` (opcional) | Frontend ya desplegado en lugar de `npm run dev` |
+
+**Variable retirada:** la placa fija (variable de entorno `E2E_VEHICLE_PLATE`) obligaba a que todas las corridas mutantes reutilizaran un vehículo que, tras la primera recepción abierta, ya no admitía otra. El preflight **rechaza** la variable si está definida. No existe un uso de solo lectura que la justifique: el flujo siempre crea datos propios.
 
 La autenticación usa la UI real de Clerk (`<SignIn/>` en `/login`), compatible con el proyecto: no añade `@clerk/testing` ni requiere la
 secret key de Clerk en el runner.
 
 ## Datos de prueba, aislamiento y limpieza
 
-- Cada corrida genera un identificador único (`newRunId`, base 36, 8 caracteres) y lo usa en: placa `E2E<id>`, nombre del cliente
-  `E2E<id> Playwright`, observaciones, código/etiqueta de checklist, nombre del firmante. Son identificables y no colisionan entre corridas.
-- E2E-01 y E2E-04 crean su propio cliente, vehículo y recepción (una recepción abierta por vehículo: no se reutilizan). E2E-05 solo lee/rechaza.
+- **Cada test que muta datos pide su propio `newRunId()`** (10 caracteres `[0-9A-Z]`: 6 de reloj en base 36 + 4 de CSPRNG, sin repetirse dentro del proceso) y lo usa en: placa `E2E<id>` (13 caracteres, cumple `^[A-Z0-9]{1,16}$` de `docs/api/crm.md`), nombre del cliente
+  `E2E<id> Playwright`, observaciones, código/etiqueta de checklist, nombre del firmante. Son identificables y no colisionan entre corridas ni entre tests de la misma corrida: **dos ejecuciones consecutivas no requieren limpieza externa**.
+- E2E-01 y E2E-04 crean su propio cliente, vehículo y recepción (una recepción abierta por vehículo: jamás se reutiliza un vehículo). E2E-05 solo lee/rechaza.
 - **No hay API pública de borrado** (el contrato declara que no existen cancelar, reabrir ni borrar recepciones; tampoco hay delete de clientes
   o vehículos en este flujo), y no se inventan endpoints de limpieza. Estrategia: el ambiente de prueba debe ser desechable o recreable
   por el equipo de backend (su drill de staging genera y destruye la base); los datos `E2E<id>` se purgan al recrearla. Esta decisión de
@@ -112,16 +116,36 @@ secret key de Clerk en el runner.
   datos ajenos, y la firma queda en R2 con la retención de evidencia del servicio.
 - Las recepciones cerradas de E2E-01 acumulan órdenes numeradas por taller; los números de orden no son deterministas, por eso se leen de la UI.
 
-## Seguridad de los artefactos
+## Seguridad de los artefactos y de las credenciales
 
-- Sin `trace` ni `video` (registrarían `Authorization`, cookies y la URL firmada de R2). Capturas solo ante fallo y **nunca** en el proyecto
-  `setup`; ante un fallo de login la página se lleva a `about:blank` antes del snapshot para que no queden correo ni contraseña.
-- La evidencia técnica (E2E-06) se genera con `e2e/support/network-evidence.ts`: solo orden, método, ruta con UUID enmascarado, estado HTTP y
-  booleanos; el PUT a R2 se registra como «URL omitida». La prueba falla si la evidencia contiene URL, `X-Amz`, `Bearer` o `Authorization`.
-- Se verificó empíricamente que `fill()` no imprime su valor en consola/JSON; el único canal que reproduce valores de formulario es el
-  `error-context.md` de fallo, cubierto por lo anterior. `e2e/.auth/` (estado de sesión), `test-results/` y `playwright-report/` están en `.gitignore`
-  y **no deben publicarse ni subirse como artefactos**.
-- El workflow manual tampoco sube reportes: solo imprime en el resumen del job el JSON de evidencia sanitizado.
+**Estrategia anti-secreto (F1).** `fill()`, `type()` y `press()` de Playwright escriben su argumento en el título del paso y en el call log
+de los errores, y de ahí pasa a `list`, `json`, `junit` y al reporte HTML. Se verificó empíricamente (control positivo
+`e2e-harness-tests/browser/control`) que un `fill(password)` deja el valor en el reporte HTML —comprimido en base64 dentro de `index.html`, por
+lo que un `includes()` sobre el archivo no lo vería—. Por eso:
+
+- Correo, contraseña y código de verificación entran con `enterSecret` (`e2e/support/secret-input.ts`): una única acción visible
+  (`locator.evaluate`) cuyo título no lleva el valor. Dentro del navegador se enfoca el campo, se asigna con el **setter nativo** de
+  `HTMLInputElement.prototype` (el rastreador de React detecta el cambio como con el teclado) y se emiten `input` (InputEvent) y `change`
+  con `bubbles`; se comprueba que el valor quedó aplicado y solo se devuelve un código fijo. Esa función captura sus propias excepciones.
+- Cualquier excepción del login se sustituye por un `LoginFailure` **nuevo**, con mensaje fijo (paso + nombre de clase de una lista cerrada) y
+  **sin `cause`**; el error original (call log, texto de página) nunca se relanza. La página se lleva a `about:blank` antes.
+- `trace`, `screenshot` y `video` están en `off` para todas las corridas con credenciales (`e2e/support/artifact-policy.ts`, compartido por la
+  configuración real y la del harness). En CI el reporter es solo `list`.
+- **El reporte HTML y `test-results/` de una corrida autenticada no se publican** (el workflow no sube artefactos). Aunque el harness demuestra
+  que las credenciales no entran, esos archivos contienen además correos, IDs de taller y texto de páginas con PII; es preferible perder el
+  artefacto a exponerlo. `e2e/.auth/` (cookies de sesión de Clerk) tampoco se sube nunca.
+- La evidencia técnica (E2E-06) viene de `e2e/support/network-evidence.ts`: orden, método, ruta con UUID enmascarados, estado HTTP y
+  booleanos. De la `uploadUrl` firmada solo se retienen **en memoria** origen y ruta para correlacionar el PUT; nunca query, firma, credencial ni
+  URL completa, y `toJSON()` del colector solo expone las entradas sanitizadas.
+- Límite conocido: `DEBUG=pw:*` / `PWDEBUG` activan trazas internas de Playwright que no forman parte de la garantía; el workflow no los define
+  (lo comprueba `e2e-harness-tests/unit/workflows.test.ts`) y no deben activarse en corridas con credenciales. En local se comprobó que
+  `DEBUG=pw:api` no imprime el argumento de `locator.evaluate`.
+
+**Prueba automática (sin credenciales reales).** `npm run test:e2e:harness` lanza Playwright en un proceso hijo con entorno limpio, contra un
+formulario local que imita a Clerk, con los marcadores sintéticos `AUDIT_SYNTHETIC_PASSWORD`, `AUDIT_SYNTHETIC_TOKEN`,
+`AUDIT_SYNTHETIC_COOKIE` y `AUDIT_SYNTHETIC_SIGNED_QUERY`, fuerza un login correcto y tres fallos (contraseña rechazada, excepción al introducir
+la credencial, campo inexistente) y comprueba que ningún marcador aparece en stdout/stderr, JSON, JUnit, HTML (incluido su zip embebido),
+adjuntos ni nombres de archivo, en las formas cruda, URL, hex, UTF-16 y base64. El control positivo garantiza que el escáner no es ciego.
 
 ## Artefactos que produce una corrida real
 
@@ -129,7 +153,7 @@ secret key de Clerk en el runner.
 | --- | --- | --- |
 | `test-results/**/s3-signature-r2-evidence.json` (y adjunto `s3-signature-r2-evidence`) | Evidencia sanitizada session → PUT R2 → complete → attach | Sí |
 | Adjuntos `e2e-01-run`, `e2e-02-close-replay` | `runId`, `receptionId`, `orderNumber`, resultado del replay | Sí (IDs sintéticos de prueba) |
-| `playwright-report/` | Reporte HTML (capturas de fallo, `error-context.md` con texto de página) | **No** (local) |
+| `playwright-report/` | Reporte HTML (solo local; `error-context.md` con texto de página). Sin credenciales (demostrado con marcadores sintéticos), pero con correos/IDs | **No** (local) |
 | `e2e/.auth/*.json` | Cookies de sesión de Clerk | **No** (secreto) |
 
 ## Defectos y blockers
@@ -153,25 +177,46 @@ Blockers de infraestructura para cerrar el gate:
 
 ## Verificación local (sin ambiente real)
 
-Node 22.23.3. Ejecutado en este worktree:
+Node 22.23.3. Ejecutado en este worktree tras el endurecimiento del harness (F1–F7):
 
 | Gate | Resultado |
 | --- | --- |
 | `npm run typecheck` | PASS |
 | `npm run lint -- --max-warnings 0` | PASS |
-| `npm run test` | PASS — 597 tests, 29 archivos (sin cambios en Vitest) |
+| `npm run test` | PASS — 597 tests, 29 archivos (sin cambios en Vitest de producto) |
+| `npm run test:e2e:harness` | PASS — 139 tests en 11 archivos (más 14 pruebas de Playwright/Chromium que ese suite lanza contra un formulario local: 13 del suite seguro, 3 de ellas fallos forzados esperados, y 1 de control) |
 | `npm run build` | PASS (aviso informativo de Vite por chunk > 500 kB, sin tocar límites) |
 | `git diff --check` | PASS |
-| `npx playwright install chromium` | PASS (Chromium 153 descargado) |
-| `npm run e2e:list` | PASS — 11 tests descubiertos (4 setup, 6 mobile-chromium, 1 desktop-smoke) |
-| `npm run e2e:mobile` sin credenciales | Falla a propósito en `preflight` (variables ausentes) y 9 pruebas «did not run»; no hay falso verde |
-| Corrida real contra infraestructura | **NO EJECUTADA** |
+| `npm run e2e:list` | PASS — 11 tests descubiertos (4 setup, 6 mobile-chromium, 1 desktop-smoke; sin cambios) |
+| `npm run e2e:mobile` sin credenciales | Falla a propósito (exit code 1) en `preflight` nombrando las 11 variables ausentes; 9 pruebas «did not run»: comportamiento fail-closed, **no es un PASS del E2E** |
+| Corrida real contra infraestructura | **NO EJECUTADA** (real environment pending) |
 
 ## CI
 
-`.github/workflows/frontend-ci.yml` no cambia: typecheck/lint/test/build siguen sin secretos. El E2E real es **manual y opt-in**:
-`.github/workflows/e2e-mobile.yml` (`workflow_dispatch` únicamente; Environment `e2e-mobile` con las variables/secrets de la tabla anterior).
-Si faltan, el `preflight` falla; el workflow no simula PASS y no corre en PRs.
+- **PR normal** (`.github/workflows/frontend-ci.yml`, sin secretos): typecheck → lint → unit tests (`npm test`, 597) → **`npm run test:e2e:harness`**
+  (con `npx playwright install --with-deps chromium` previo) → build → auditoría de dependencias → gitleaks. No depende de Clerk, backend ni R2.
+- **E2E real** (`.github/workflows/e2e-mobile.yml`): `workflow_dispatch` únicamente; Environment `e2e-mobile` con las variables/secrets de la tabla de
+  variables. Ejecuta `npm run e2e:mobile` sin `continue-on-error`, sin `|| true`, sin `set -x`, sin volcar el entorno y con el código de salida
+  intacto; no sube reportes ni artefactos. Si faltan variables, el `preflight` falla; el workflow no simula PASS y no corre en PRs.
+
+## Suite del propio harness (`e2e-harness-tests/`)
+
+`npm run test:e2e:harness` (Vitest en Node + Playwright/Chromium contra un servidor local; **sin** Clerk, backend, R2 ni credenciales) protege el
+harness de degradaciones que los 597 tests de producto no ven:
+
+| Hallazgo | Qué se prueba |
+| --- | --- |
+| F1 | Login sin `fill()`; marcadores sintéticos ausentes en stdout/stderr/JSON/JUnit/HTML(+zip)/adjuntos; errores sanitizados; control positivo del escáner |
+| F2 | Envelope `{ signature: {…} }` de attach: válido → `true`; raíz incorrecta → `false`; `signature` vacía → `false` |
+| F3 | Cadena session → PUT → complete → attach correlacionada: PUT ajeno / ruta distinta / 500, complete o attach con otra media, otra recepción, orden → no cuentan |
+| F4 | Tinta real en el canvas (píxeles): vacío → FAIL, toque → FAIL, trazo extendido → PASS (Chromium táctil, réplica del lienzo de la app) |
+| F5 | Placas únicas por corrida, formato `^[A-Z0-9]{1,16}$`, sin colisión; la placa fija se rechaza en el preflight |
+| F6 | Paginador: termina, recurso B en página tardía detectado, tope con cursor pendiente / cursor repetido / ciclo → FAIL |
+| Preflight y personas | Env sintético completo válido; falta owner / restricted / tenant B / config parcial → error; storageState e identidades distintos; sin fallback entre personas |
+| Móvil | `mobile-chromium` exige `hasTouch`, `isMobile` y viewport móvil; en runtime `navigator.maxTouchPoints > 0` y ancho en rango; un navegador de escritorio falla y no hay rama de ratón |
+| Workflows | `e2e-mobile.yml`: solo `workflow_dispatch`, sin `continue-on-error` ni `|| true`, ejecuta `npm run e2e:mobile`, sin dump de entorno ni subida de artefactos; `frontend-ci.yml` ejecuta el harness |
+
+Esta suite **no** sustituye al gate real: demuestra que el harness es seguro y que no se degrada, no que el producto funcione.
 
 ## DOC_CONFLICT — recepción offline en el gate de Sprint 3 (diferido a Sprint 13)
 

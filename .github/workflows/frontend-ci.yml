@@ -47,6 +47,14 @@ jobs:
       - name: Test
         run: npm test
 
+      # Pruebas del propio harness E2E (credential-free): sin Clerk, backend, R2 ni secretos. Lanzan Chromium contra un
+      # formulario local, así que necesitan el navegador; el E2E real (con secretos) vive en e2e-mobile.yml, manual.
+      - name: Install Chromium for the E2E harness tests
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E harness tests (no credentials)
+        run: npm run test:e2e:harness
+
       - name: Build
         run: npm run build
 

@@ -1,6 +1,8 @@
 import { expect, type Page } from '@playwright/test';
 
 import { expectWorkshopShell } from './clerk-login';
+import { plateForRun } from './env';
+import { expectSignatureInk, SIGNATURE_CANVAS_LABEL } from './signature-ink';
 
 /**
  * Pasos de UI del flujo de recepción, con los textos reales de la aplicación (src/features/reception, src/shared/crm).
@@ -14,10 +16,14 @@ export interface RunFixture {
   readonly lastName: string;
 }
 
-export function runFixture(runId: string, existingPlate: string | null): RunFixture {
+/**
+ * Datos ÚNICOS por corrida (placa, nombre del cliente). Cada test que crea una recepción abierta pide su propio `newRunId()`:
+ * jamás se reutiliza un vehículo fijo, porque un vehículo con recepción abierta rompería la corrida siguiente.
+ */
+export function runFixture(runId: string): RunFixture {
   return {
     runId,
-    plate: existingPlate ?? `E2E${runId}`,
+    plate: plateForRun(runId),
     // Nombre único por corrida: es lo que busca el selector de propietario del formulario de vehículo.
     firstName: `E2E${runId}`,
     lastName: 'Playwright',
@@ -206,12 +212,16 @@ export async function expectInspectionPersisted(page: Page, item: InspectionFixt
 }
 
 /**
- * Dibuja un trazo en el canvas con eventos reales. En el perfil táctil usa CDP `Input.dispatchTouchEvent` (genera
- * pointer events con pointerType=touch); en escritorio, ratón. El canvas fija touch-action:none.
+ * Dibuja un trazo en el canvas con eventos TÁCTILES reales: CDP `Input.dispatchTouchEvent` genera pointer events con
+ * pointerType=touch. El gate es móvil: no hay rama de ratón ni fallback silencioso. Verifica que el canvas recibió solo
+ * pointer events táctiles. El canvas fija touch-action:none.
  */
-export async function drawSignature(page: Page, touch: boolean): Promise<void> {
-  const canvas = page.getByLabel('Firma manuscrita de recepción');
+export async function drawSignature(page: Page): Promise<void> {
+  const canvas = page.getByLabel(SIGNATURE_CANVAS_LABEL);
   await canvas.scrollIntoViewIfNeeded();
+  if (!(await page.evaluate(() => navigator.maxTouchPoints > 0))) {
+    throw new Error('El gate móvil exige un contexto táctil (navigator.maxTouchPoints > 0): no se dibuja con ratón.');
+  }
   const box = await canvas.boundingBox();
   if (box === null) throw new Error('El canvas de firma no tiene caja visible.');
   const points = Array.from({ length: 24 }, (_, index) => ({
@@ -219,35 +229,40 @@ export async function drawSignature(page: Page, touch: boolean): Promise<void> {
     y: box.y + box.height * (0.5 + Math.sin(index / 3) * 0.28),
   }));
   const first = points[0];
-  const last = points[points.length - 1];
-  if (first === undefined || last === undefined) throw new Error('Trazo vacío.');
-  if (touch) {
-    const cdp = await page.context().newCDPSession(page);
-    try {
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
-      for (const point of points.slice(1)) {
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
-      }
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    } finally {
-      await cdp.detach();
+  if (first === undefined) throw new Error('Trazo vacío.');
+  await canvas.evaluate((element) => {
+    const seen: string[] = [];
+    Reflect.set(window, '__signaturePointerTypes', seen);
+    for (const type of ['pointerdown', 'pointermove']) {
+      element.addEventListener(type, (event) => {
+        if (event instanceof PointerEvent) seen.push(event.pointerType);
+      }, true);
     }
-  } else {
-    await page.mouse.move(first.x, first.y);
-    await page.mouse.down();
+  });
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
     for (const point of points.slice(1)) {
-      await page.mouse.move(point.x, point.y, { steps: 2 });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
     }
-    await page.mouse.up();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  } finally {
+    await cdp.detach();
+  }
+  const pointerTypes = await page.evaluate(() => Reflect.get(window, '__signaturePointerTypes') as string[]);
+  if (pointerTypes.length === 0 || pointerTypes.some((type) => type !== 'touch')) {
+    throw new Error(`El trazo no llegó como pointer events táctiles (tipos observados: ${[...new Set(pointerTypes)].join(', ') || 'ninguno'}).`);
   }
 }
 
-/** Documento de aceptación real → nombre → lectura → firma dibujada → registrar. Termina con «Firma registrada». */
-export async function registerSignature(page: Page, signerName: string, touch: boolean): Promise<void> {
+/** Documento de aceptación real → nombre → lectura → firma táctil con tinta verificada → registrar. Termina con «Firma registrada». */
+export async function registerSignature(page: Page, signerName: string): Promise<void> {
   await expect(page.getByText(/^Versión: /)).toBeVisible();
   await page.getByLabel('Nombre del firmante *', { exact: true }).fill(signerName);
   await page.getByLabel('He leído el documento de aceptación mostrado.', { exact: true }).check();
-  await drawSignature(page, touch);
+  await drawSignature(page);
+  // «Registrar firma» habilitado no prueba tinta: se inspeccionan los píxeles del canvas (solo métricas, sin guardar el PNG).
+  await expectSignatureInk(page);
   const submit = page.getByRole('button', { name: 'Registrar firma', exact: true });
   await expect(submit).toBeEnabled();
   await submit.click();
