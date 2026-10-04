@@ -1,4 +1,7 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { ReceptionProvider } from './reception-context';
+import { ReceptionDetailPage } from './reception-detail-page';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient, type FetchResponse } from '@/shared/api/http-client';
 import { DETAIL, TECH, SUMMARY, IDS, TIME, PERMISSIONS, jsonResponse, errorResponse, renderReception, type Call } from '@/test/render-reception';
@@ -653,6 +656,107 @@ describe('runtime acceptance document', () => {
 });
 describe('shared inspection/signature/close coordination', () => {
     const checklist = { checkItemId: IDS.other, code: 'lights', label: 'Luces', status: 'ok' as const, notes: null, createdAt: TIME };
+    it.each([
+        { signed: true, failure: 'conflict' }, { signed: false, failure: 'conflict' },
+        { signed: true, failure: 'network' }, { signed: false, failure: 'network' },
+        { signed: true, failure: 'server_error' }, { signed: false, failure: 'server_error' },
+        { signed: true, failure: 'contract_violation' }, { signed: false, failure: 'contract_violation' },
+    ])('inspection recovery survives exit after failed GET and blocks workflow until GET + review: %j', async ({ signed, failure }) => {
+        let lookups = 0;
+        current = { ...(signed ? SIGNED : DETAIL), checklist: [checklist] };
+        const h = renderReception(route, call => {
+            if (call.init.method === 'PATCH') {
+                if (failure === 'network') return Promise.reject(new Error('lost response'));
+                if (failure === 'server_error') return errorResponse('INTERNAL_ERROR', 500);
+                if (failure === 'contract_violation') return jsonResponse(null);
+                return errorResponse('RESOURCE_VERSION_CONFLICT');
+            }
+            if (call.init.method === 'GET' && call.url.pathname === '/api/v1/receptions/' + IDS.reception) {
+                lookups++;
+                if (lookups === 2) return errorResponse('INTERNAL_ERROR', 500);
+                if (lookups > 2) current = { ...current, updatedAt: '2026-10-03T12:13:14.456789Z' };
+            }
+            return defaults(call);
+        }, permissions);
+        if (!signed) await prepare();
+        fireEvent.click(await screen.findByRole('button', { name: 'Editar elemento Luces' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar checklist' }));
+        await screen.findByRole('button', { name: 'Volver a consultar inspección' });
+        await waitFor(() => { expect(screen.getByRole('button', { name: 'Salir de inspección' }).hasAttribute('disabled')).toBe(false); });
+        fireEvent.click(screen.getByRole('button', { name: 'Salir de inspección' }));
+        expect(screen.queryByRole('form', { name: 'Edición de checklist' })).toBeNull();
+        const blockedWorkflow = () => {
+            const button = screen.getByRole('button', { name: signed ? 'Cerrar recepción' : 'Registrar firma' });
+            expect(button.hasAttribute('disabled')).toBe(true); fireEvent.click(button);
+            expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(true);
+            expect(screen.queryByRole('dialog')).toBeNull();
+            expect(mutation(h.calls, '/close')).toHaveLength(0);
+            expect(mutation(h.calls, '/signature')).toHaveLength(0);
+            expect(mutation(h.calls, '/upload-sessions')).toHaveLength(0);
+            if (!signed) expect(screen.getByLabelText('Firma manuscrita de recepción').getAttribute('aria-disabled')).toBe('true');
+        };
+        blockedWorkflow();
+        fireEvent.click(screen.getByRole('button', { name: 'Volver a consultar inspección' }));
+        await screen.findByRole('button', { name: 'He revisado la inspección actual' });
+        blockedWorkflow();
+        fireEvent.click(screen.getByRole('button', { name: 'He revisado la inspección actual' }));
+        expect(screen.getByRole('button', { name: 'Editar recepción' }).hasAttribute('disabled')).toBe(false);
+        expect(screen.getByRole('button', { name: signed ? 'Cerrar recepción' : 'Registrar firma' }).hasAttribute('disabled')).toBe(false);
+        expect(lookups).toBe(3);
+        if (signed) { await confirmClose(); await screen.findByText('Generada correctamente'); expect(mutation(h.calls, '/close')).toHaveLength(1); }
+        else { sign(); await screen.findByText('Firma registrada'); expect(mutation(h.calls, '/signature')).toHaveLength(1); }
+    });
+    it('RECEPTION_NOT_EDITABLE stays locked after leaving inspection even if a later GET reports open', async () => {
+        let lookups = 0;
+        current = { ...SIGNED, checklist: [checklist] };
+        const h = renderReception(route, call => {
+            if (call.init.method === 'PATCH') return errorResponse('RECEPTION_NOT_EDITABLE');
+            if (call.url.pathname === '/api/v1/receptions/' + IDS.reception && ++lookups === 2) return errorResponse('INTERNAL_ERROR', 500);
+            return defaults(call);
+        }, permissions);
+        fireEvent.click(await screen.findByRole('button', { name: 'Editar elemento Luces' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar checklist' }));
+        await screen.findByRole('button', { name: 'Volver a consultar inspección' });
+        await waitFor(() => { expect(screen.getByRole('button', { name: 'Salir de inspección' }).hasAttribute('disabled')).toBe(false); });
+        fireEvent.click(screen.getByRole('button', { name: 'Salir de inspección' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Volver a consultar inspección' }));
+        await waitFor(() => { expect(lookups).toBe(3); });
+        expect(screen.queryByRole('button', { name: 'He revisado la inspección actual' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Editar recepción' })).toBeNull();
+        const close = screen.getByRole('button', { name: 'Cerrar recepción' });
+        expect(close.hasAttribute('disabled')).toBe(true); fireEvent.click(close);
+        expect(mutation(h.calls, '/close')).toHaveLength(0);
+    });
+    it('direct A to B navigation isolates B from the late pending inspection PATCH for A', async () => {
+        let resolve: ((response: FetchResponse) => void) | undefined;
+        const calls: Call[] = [];
+        const other = { ...SIGNED, receptionId: IDS.other, customerNotes: 'Sólo recepción B', mileageKm: 202 };
+        const apiClient = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: (url, init) => {
+            const call = { url: new URL(url), init }; calls.push(call);
+            if (init.method === 'PATCH') return new Promise(r => { resolve = r; });
+            return Promise.resolve(jsonResponse({ reception: call.url.pathname.endsWith(IDS.other) ? other : { ...SIGNED, checklist: [checklist], customerNotes: 'Sólo recepción A' } }));
+        } });
+        render(<MemoryRouter initialEntries={[route]}><Link to={'/recepciones/' + IDS.other}>Ir directamente a B</Link>
+            <ReceptionProvider runtime={{ apiClient, tenantId: IDS.tenant, identity: 'synthetic-session', permissions }}>
+                <Routes><Route path="/recepciones/:receptionId" element={<ReceptionDetailPage/>}/></Routes>
+            </ReceptionProvider></MemoryRouter>);
+        await screen.findByText('Sólo recepción A');
+        fireEvent.click(screen.getByRole('button', { name: 'Editar elemento Luces' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar checklist' }));
+        await screen.findByText('Guardando inspección…');
+        expect(calls.filter(call => call.init.method === 'PATCH')).toHaveLength(1);
+        fireEvent.click(screen.getByRole('link', { name: 'Ir directamente a B' }));
+        await screen.findByText('Sólo recepción B');
+        expect(calls.filter(call => call.init.method === 'GET' && call.url.pathname === '/api/v1/receptions/' + IDS.other)).toHaveLength(1);
+        await act(() => { resolve?.(jsonResponse({ reception: { ...SIGNED, checklist: [checklist], customerNotes: 'Respuesta tardía de A', mileageKm: 909 } })); return Promise.resolve(); });
+        expect(screen.getByText('Sólo recepción B')).toBeDefined();
+        expect(screen.getByText('202 km')).toBeDefined();
+        expect(screen.queryByText('Respuesta tardía de A')).toBeNull();
+        expect(screen.queryByText('Sólo recepción A')).toBeNull();
+        expect(screen.queryByText('909 km')).toBeNull();
+        expect(screen.queryByText('Luces: Correcto')).toBeNull();
+        expect(screen.queryByRole('form', { name: 'Edición de checklist' })).toBeNull();
+    });
     it.each([false, true])('checklist saving disables signature/close, signed=%s', async signed => {
         let resolve: ((r: FetchResponse) => void) | undefined;
         current = signed ? { ...SIGNED, checklist: [checklist] } : { ...DETAIL, checklist: [checklist] };

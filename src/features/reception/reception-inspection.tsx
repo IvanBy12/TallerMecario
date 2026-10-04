@@ -9,12 +9,29 @@ import { RequestReference } from './request-reference';
 import { useReceptionAction, type ReceptionCoordinator } from './use-reception-action';
 type ChecklistForm = { code: string; label: string; status: ChecklistState; notes: string };
 type DamageForm = { damageId: string | null; zoneCode: string; damageType: string; severity: DamageSeverity; description: string };
+type DamageCreate = { operation: 'create'; zoneCode: string; damageType: string; severity: DamageSeverity; description: string | null };
+type CreateAttempt = { body: JsonObject; entry: DamageCreate; baseline: ReceptionDetail };
+const ambiguous = (error: ApiFailure) => ['network', 'timeout', 'server_error', 'contract_violation'].includes(error.kind);
+function reconciledDamage(attempt: CreateAttempt, current: ReceptionDetail) {
+    if (!('updatedAt' in current) || current.updatedAt === attempt.body['expectedUpdatedAt']) return null;
+    const previous = attempt.baseline.damages;
+    const added = current.damages.filter(item => !previous.some(old => old.damageId === item.damageId));
+    // A single new canonical match, with every previous damage unchanged, identifies
+    // the intended logical damage. Multiple candidates never authorize a fresh create.
+    if (added.length !== 1 || current.damages.length !== previous.length + 1 ||
+        !previous.every(old => current.damages.some(item => item.damageId === old.damageId &&
+            item.zoneCode === old.zoneCode && item.damageType === old.damageType && item.severity === old.severity &&
+            item.description === old.description && item.createdAt === old.createdAt))) return null;
+    const item = added[0];
+    return item !== undefined && item.zoneCode === attempt.entry.zoneCode && item.damageType === attempt.entry.damageType &&
+        item.severity === attempt.entry.severity && item.description === attempt.entry.description ? item : null;
+}
 const EMPTY_CHECKLIST: ChecklistForm = { code: '', label: '', status: 'not_checked', notes: '' };
 const EMPTY_DAMAGE: DamageForm = { damageId: null, zoneCode: '', damageType: '', severity: 'minor', description: '' };
-export function ReceptionInspection({ reception, editable, unavailable, coordinator, onChange, onEditing, onLock }: {
+export function ReceptionInspection({ reception, editable, unavailable, coordinator, onChange, onEditing, onRecoveryPending, onLock }: {
     readonly reception: ReceptionDetail; readonly editable: boolean; readonly unavailable: boolean;
     readonly coordinator: ReceptionCoordinator; readonly onChange: (data: ReceptionDetail) => void;
-    readonly onEditing: (editing: boolean) => void; readonly onLock: () => void;
+    readonly onEditing: (editing: boolean) => void; readonly onRecoveryPending: (pending: boolean) => void; readonly onLock: () => void;
 }) {
     const { api, signal } = useReception();
     const action = useReceptionAction(coordinator);
@@ -26,23 +43,46 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
     const [conflict, setConflict] = useState(false);
     const [recovered, setRecovered] = useState(false);
     const [recoveryFailure, setRecoveryFailure] = useState<ApiFailure | null>(null);
+    const [ambiguousCreate, setAmbiguousCreate] = useState<CreateAttempt | null>(null);
+    const [reviewed, setReviewed] = useState(false);
     const blocked = unavailable || action.blocked || !editable;
-    const finish = () => { setMode(null); onEditing(false); setValidation(false); setConflict(false); setRecoveryFailure(null); };
+    const finish = () => { setMode(null); onEditing(false); setValidation(false); };
     const begin = (next: 'checklist' | 'damages') => {
-        if (blocked || mode !== null) return;
+        if (blocked || conflict || ambiguousCreate !== null || mode !== null) return;
         setMode(next); onEditing(true); setValidation(false); setConflict(false); setRecovered(false); setRecoveryFailure(null);
     };
-    const refresh = async () => {
+    const refresh = async (attempt = ambiguousCreate) => {
+        setRecovered(false); setReviewed(false);
         const result = await api.detail(reception.receptionId);
         if (signal.aborted) return;
         if (result.ok) {
             onChange(result.data); setRecovered(true); setRecoveryFailure(null);
+            if (attempt !== null) {
+                const canonical = reconciledDamage(attempt, result.data);
+                if (canonical !== null) {
+                    setDamage({ ...canonical, description: canonical.description ?? '' });
+                    setAmbiguousCreate(null);
+                }
+            }
             if (result.data.status !== 'open') onLock();
         } else { setRecoveryFailure(result.failure); action.observeFailure(result.failure); }
     };
+    const confirmed = (data: ReceptionDetail) => {
+        onChange(data); setAmbiguousCreate(null); setConflict(false); setRecoveryFailure(null);
+        onRecoveryPending(false); finish();
+    };
+    const recover = async (error: ApiFailure, attempt: CreateAttempt | null) => {
+        if (error.code === 'RESOURCE_VERSION_CONFLICT' || error.code === 'RECEPTION_NOT_EDITABLE' || ambiguous(error)) {
+            setConflict(true); setRecovered(false); setReviewed(false); onRecoveryPending(true);
+            if (attempt !== null && ambiguous(error)) setAmbiguousCreate(attempt);
+            if (error.code === 'RECEPTION_NOT_EDITABLE') onLock();
+            await refresh(attempt);
+        }
+    };
     const save = () => {
-        if (blocked || conflict || mode === null || !('updatedAt' in reception)) return;
+        if (blocked || conflict || ambiguousCreate !== null || mode === null || !('updatedAt' in reception)) return;
         let body: JsonObject;
+        let attempt: CreateAttempt | null = null;
         if (mode === 'checklist') {
             const code = inspectionText(checklist.code, 64), label = inspectionText(checklist.label, 160), notes = normalizeReceptionText(checklist.notes);
             if (code === null || label === null || notes === false) { setValidation(true); return; }
@@ -51,39 +91,39 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
             const zoneCode = inspectionText(damage.zoneCode, 64), damageType = inspectionText(damage.damageType, 64), description = normalizeReceptionText(damage.description);
             if (zoneCode === null || damageType === null || description === false ||
                 (damage.damageId !== null && !reception.damages.some(item => item.damageId === damage.damageId))) { setValidation(true); return; }
-            body = { expectedUpdatedAt: reception.updatedAt, damages: [{ operation: damage.damageId === null ? 'create' : 'update',
-                ...(damage.damageId === null ? {} : { damageId: damage.damageId }), zoneCode, damageType, severity: damage.severity, description }] };
+            const entry: DamageCreate = { operation: 'create', zoneCode, damageType, severity: damage.severity, description };
+            body = { expectedUpdatedAt: reception.updatedAt, damages: [damage.damageId === null ? entry :
+                { ...entry, operation: 'update', damageId: damage.damageId }] };
+            if (damage.damageId === null) attempt = { body, entry, baseline: reception };
         }
         setValidation(false);
         void action.run(() => mode === 'checklist' ? api.patchChecklist(reception.receptionId, body) : api.patchDamages(reception.receptionId, body),
-            data => { onChange(data); finish(); }, async error => {
-                if (error.code === 'RESOURCE_VERSION_CONFLICT' || error.code === 'RECEPTION_NOT_EDITABLE' ||
-                    ['network', 'timeout', 'server_error', 'contract_violation'].includes(error.kind)) {
-                    setConflict(true); setRecovered(false);
-                    if (error.code === 'RECEPTION_NOT_EDITABLE') onLock();
-                    await refresh();
-                }
-            });
+            confirmed, error => recover(error, ambiguous(error) ? attempt : null));
+    };
+    const retryCreate = () => {
+        if (blocked || !recovered || !reviewed || ambiguousCreate === null) return;
+        const attempt = ambiguousCreate;
+        void action.run(() => api.patchDamages(reception.receptionId, attempt.body), confirmed, error => recover(error, attempt));
     };
     return <div className="reception-inspection">
         <section className="reception-evidence" aria-labelledby="checklist-heading"><h2 id="checklist-heading">Checklist</h2>
             {reception.checklist.length === 0 ? <p>Sin elementos registrados.</p> : <ul className="reception-list">{reception.checklist.map(item =>
                 <li key={item.checkItemId}><p>{item.label}: {CHECKLIST_STATES[item.status]}</p>{item.notes !== null && <p className="reception-text">{item.notes}</p>}
-                    {editable && <button type="button" disabled={blocked || mode !== null} onClick={() => {
+                    {editable && <button type="button" disabled={blocked || conflict || mode !== null} onClick={() => {
                         setChecklist({ code: item.code, label: item.label, status: item.status, notes: item.notes ?? '' }); setExistingCode(true); begin('checklist');
                     }}>Editar elemento {item.label}</button>}</li>)}</ul>}
-            {editable && <button type="button" disabled={blocked || mode !== null} onClick={() => { setChecklist(EMPTY_CHECKLIST); setExistingCode(false); begin('checklist'); }}>Agregar elemento de checklist</button>}
+            {editable && <button type="button" disabled={blocked || conflict || mode !== null} onClick={() => { setChecklist(EMPTY_CHECKLIST); setExistingCode(false); begin('checklist'); }}>Agregar elemento de checklist</button>}
         </section>
         <section className="reception-evidence" aria-labelledby="damages-heading"><h2 id="damages-heading">Daños</h2>
             {reception.damages.length === 0 ? <p>Sin daños registrados.</p> : <ul className="reception-list">{reception.damages.map(item =>
                 <li key={item.damageId}><p>{item.zoneCode} · {item.damageType} · {DAMAGE_SEVERITIES[item.severity]}</p>{item.description !== null && <p className="reception-text">{item.description}</p>}
-                    {editable && <button type="button" disabled={blocked || mode !== null} onClick={() => {
+                    {editable && <button type="button" disabled={blocked || conflict || mode !== null} onClick={() => {
                         setDamage({ damageId: item.damageId, zoneCode: item.zoneCode, damageType: item.damageType, severity: item.severity, description: item.description ?? '' }); begin('damages');
                     }}>Editar daño {item.zoneCode} · {item.damageType}</button>}</li>)}</ul>}
-            {editable && <button type="button" disabled={blocked || mode !== null} onClick={() => { setDamage(EMPTY_DAMAGE); begin('damages'); }}>Agregar daño</button>}
+            {editable && <button type="button" disabled={blocked || conflict || mode !== null} onClick={() => { setDamage(EMPTY_DAMAGE); begin('damages'); }}>Agregar daño</button>}
         </section>
         {mode !== null && <form className="reception-evidence" aria-label={mode === 'checklist' ? 'Edición de checklist' : 'Edición de daño'} onSubmit={event => { event.preventDefault(); save(); }}>
-            <fieldset disabled={blocked}>
+            <fieldset disabled={blocked || ambiguousCreate !== null}>
                 {mode === 'checklist' ? <>
                     <legend>Elemento del checklist</legend>
                     <label>Código del elemento<input required readOnly={existingCode} value={checklist.code} onChange={e => { setChecklist(old => ({ ...old, code: e.target.value })); }}/></label>
@@ -104,13 +144,18 @@ export function ReceptionInspection({ reception, editable, unavailable, coordina
             </fieldset>
             {validation && <p role="alert">Completa los campos obligatorios: códigos, zona y tipo hasta 64 caracteres; elemento hasta 160; notas y descripción hasta 2000, sin caracteres de control.</p>}
             {action.busy && <p role="status">Guardando inspección…</p>}
-            <RequestReference failure={action.failure}/><RequestReference failure={recoveryFailure}/>
-            {conflict && <div role="alert"><p>La recepción cambió o no se pudo confirmar el guardado. Conservamos tus datos. Revisa el checklist y los daños actuales antes de volver a guardar.</p>
-                {recovered ? editable && <button type="button" disabled={blocked} onClick={() => { setConflict(false); }}>He revisado la inspección actual</button> :
-                    <button type="button" disabled={unavailable || action.blocked} onClick={() => { void action.run(async () => { await refresh(); return { ok: true, data: null }; }, () => undefined); }}>Volver a consultar inspección</button>}
-            </div>}
             <div className="reception-actions"><button type="submit" disabled={blocked || conflict}>{mode === 'checklist' ? 'Guardar checklist' : 'Guardar daño'}</button>
                 <button type="button" disabled={unavailable || action.blocked} onClick={finish}>Salir de inspección</button></div>
         </form>}
+        <RequestReference failure={action.failure}/><RequestReference failure={recoveryFailure}/>
+        {conflict && <div role="alert"><p>La recepción cambió o no se pudo confirmar el guardado. Conservamos tus datos. Revisa el checklist y los daños actuales antes de volver a guardar.</p>
+            {recovered && editable && !reviewed && <button type="button" disabled={blocked} onClick={() => {
+                setReviewed(true);
+                if (ambiguousCreate === null) { setConflict(false); onRecoveryPending(false); }
+            }}>He revisado la inspección actual</button>}
+            {(!recovered || ambiguousCreate !== null) && <button type="button" disabled={unavailable || action.blocked} onClick={() => { void action.run(async () => { await refresh(); return { ok: true, data: null }; }, () => undefined); }}>Volver a consultar inspección</button>}
+            {ambiguousCreate !== null && <><p>No se ha confirmado el daño. El reintento conserva los datos y la versión originales.</p>
+                <button type="button" disabled={blocked || !recovered || !reviewed} onClick={retryCreate}>Reintentar el daño original</button></>}
+        </div>}
     </div>;
 }
