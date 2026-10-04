@@ -128,7 +128,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['vite.config.ts'],
+    files: ['vite.config.ts', 'playwright.config.ts'],
     rules: { 'no-restricted-exports': 'off' },
   },
   {

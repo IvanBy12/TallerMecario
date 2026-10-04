@@ -148,3 +148,11 @@ vite.config.ts.timestamp-*
 .vscode/
 .DS_Store
 Thumbs.db
+
+# --- Playwright E2E móvil (Sprint 3) ---
+# Los artefactos locales pueden contener PII sintética y estado de sesión de Clerk: nunca se versionan.
+/test-results/
+/playwright-report/
+/blob-report/
+/e2e/.auth/
+!.env.e2e.example

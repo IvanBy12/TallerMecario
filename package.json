@@ -13,7 +13,11 @@
     "typecheck": "tsc -b",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:mobile": "playwright test --project=mobile-chromium",
+    "e2e:headed": "playwright test --project=mobile-chromium --headed",
+    "e2e:list": "playwright test --list"
   },
   "dependencies": {
     "@clerk/react": "~6.17.4",
@@ -23,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "~22.20.4",
