@@ -107,9 +107,43 @@ export async function signInThroughUi(
     if (await code.isVisible()) {
       step = 'código de verificación';
       if (verificationCode === null) {
-        throw new LoginRejected('Clerk pidió un código de verificación y E2E_VERIFICATION_CODE no está definido.');
+        const manualVerification =
+          process.env['CI'] === undefined &&
+          process.env['E2E_MANUAL_VERIFICATION'] === '1';
+
+        if (!manualVerification) {
+          throw new LoginRejected(
+            'Clerk pidió un código de verificación y E2E_VERIFICATION_CODE no está definido.',
+          );
+        }
+
+        console.log(
+          'E2E: introduce manualmente el código de verificación en Chromium y continúa.',
+        );
+
+        step = 'resultado';
+        await shell.or(clerkError).or(selection).or(noAccess).first().waitFor({
+          timeout: 180_000,
+        });
+
+        if (await clerkError.isVisible()) {
+          throw new LoginRejected(
+            'Clerk rechazó el código de verificación del usuario de prueba.',
+          );
+        }
+        if (await selection.isVisible()) {
+          throw new LoginRejected(
+            'El usuario de prueba tiene varias memberships activas: el fixture debe tener exactamente una.',
+          );
+        }
+        if (await noAccess.isVisible()) {
+          throw new LoginRejected(
+            'El usuario de prueba no tiene membership activa en ningún taller.',
+          );
+        }
+      } else {
+        await enterSecret(code, verificationCode, fieldTimeout);
       }
-      await enterSecret(code, verificationCode, fieldTimeout);
     }
     step = 'shell del taller';
     await expectWorkshopShell(page);
