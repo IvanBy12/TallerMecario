@@ -1099,3 +1099,17 @@ a.dash-action:hover { background: var(--dash-soft); border-color: var(--dash-blu
 .reception-page :where(input, select, textarea) { min-width: 0; min-height: 44px; }
 .reception-page .reception-actions > * { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .reception-inspection input[readonly] { background: var(--tm-surface-muted); }
+
+/* S4-F02: selección local, con controles nativos y tokens existentes. */
+.photo-picker { display: grid; gap: var(--tm-space-3); min-width: 0; }
+.photo-picker p { margin: 0; overflow-wrap: anywhere; }
+.photo-picker__acknowledgement { display: flex; gap: var(--tm-space-2); align-items: center; min-height: 44px; }
+.photo-picker__controls { display: grid; gap: var(--tm-space-2); min-width: 0; }
+.photo-picker input[type="file"] { width: 100%; min-width: 0; min-height: 44px; font: inherit; }
+.photo-picker input[type="file"]::file-selector-button { min-height: 44px; font: inherit; }
+.photo-picker .ui-button { min-height: 44px; white-space: normal; }
+.photo-picker :disabled { opacity: .6; cursor: default; }
+.photo-preview-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--tm-space-3); list-style: none; padding: 0; margin: 0; min-width: 0; }
+.photo-preview-list li { min-width: 0; display: grid; gap: var(--tm-space-2); padding: var(--tm-space-3); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); }
+.photo-preview-list img { display: block; width: 100%; max-width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--tm-surface-muted); border-radius: var(--tm-radius-sm); }
+@media (min-width: 48rem) { .photo-preview-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
