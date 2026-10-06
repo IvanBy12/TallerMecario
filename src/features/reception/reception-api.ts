@@ -1,9 +1,10 @@
+import { parseActiveMedia, parseUploadSession } from '@/shared/media/media-contract';
 import { classifyFailure } from '@/shared/api/api-failure';
 import type { ApiClient, ApiResult, GetRequest, JsonObject, QueryParams } from '@/shared/api/http-client';
 import { id, parseConsent, parseConsents, parseCustomers, parseNotice, parseOwners, parseAcceptanceDocument, parseReception, parseReceptionDetail, parseReceptions, parseVehicles, record } from './reception-contract';
 import { validInspectionBody } from './reception-inspection-contract';
 import { validReceptionBody } from './reception-create-form';
-import { parseActiveMedia, parseAttachedSignature, parseClosedReception, parseUploadSession } from './reception-workflow-contract';
+import { parseAttachedSignature, parseClosedReception } from './reception-workflow-contract';
 export interface ReceptionFilters {
     readonly status?: 'open' | 'closed';
     readonly vehicleId?: string;

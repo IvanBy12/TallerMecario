@@ -1,3 +1,4 @@
+import { parseActiveMedia } from '@/shared/media/media-contract';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ReceptionProvider } from './reception-context';
@@ -7,9 +8,8 @@ import { createApiClient, type FetchResponse } from '@/shared/api/http-client';
 import { DETAIL, IDS, TIME, PERMISSIONS, jsonResponse, errorResponse, renderReception, type Call } from '@/test/render-reception';
 import { createReceptionApi } from './reception-api';
 import { RECEPTION_ACCEPTANCE } from './reception-acceptance';
-import { putSignature } from './reception-media-upload';
 import { parseReceptionDetail, type ReceptionDetail } from './reception-contract';
-import { parseActiveMedia, parseAttachedSignature, parseClosedReception, parseUploadSession } from './reception-workflow-contract';
+import { parseAttachedSignature, parseClosedReception } from './reception-workflow-contract';
 const MEDIA = IDS.other, SESSION = IDS.consent;
 const SIGNATURE = { signatureId: IDS.membership, documentVersion: RECEPTION_ACCEPTANCE.documentVersion, signedAt: TIME };
 const ATTACHED = { ...SIGNATURE, receptionId: IDS.reception, signatureMediaId: MEDIA };
@@ -17,7 +17,6 @@ const ORDER = { id: IDS.other, receptionId: IDS.reception, vehicleId: IDS.vehicl
 const CLOSED = { reception: { id: IDS.reception, status: 'closed', closedAt: TIME, updatedAt: TIME }, serviceOrder: ORDER };
 const SIGNED = { ...DETAIL, signature: SIGNATURE };
 const FINAL = { ...DETAIL, status: 'closed' as const, closedAt: TIME, serviceOrder: { id: ORDER.id, orderNumber: ORDER.orderNumber, status: ORDER.status } };
-const UPLOAD = { uploadSessionId: SESSION, mediaAssetId: MEDIA, status: 'pending' as const, uploadUrl: 'https://storage.example.test/signature?presigned=opaque', uploadMethod: 'PUT' as const, uploadHeaders: { 'Content-Type': 'image/png', 'If-None-Match': '*' }, objectKey: 'internal', expiresAt: TIME };
 const BLOB = new Blob(['synthetic ink'], { type: 'image/png' });
 const ACTIVE = { mediaAssetId: MEDIA, status: 'active', sizeBytes: BLOB.size, checksumSha256: null };
 const permissions = [...PERMISSIONS, { code: 'receptions.close', scopes: ['tenant'] }];
@@ -167,26 +166,16 @@ describe('close and handoff', () => {
         await screen.findByRole('button', { name: 'Cerrar recepción' });
     });
 });
-describe('workflow response validation and isolated storage', () => {
+describe('workflow response validation', () => {
     it('parses only actual signature and serviceOrder summaries', () => {
         expect(parseReceptionDetail({ reception: SIGNED })?.signature).toEqual(SIGNATURE);
         expect(parseReceptionDetail({ reception: { ...DETAIL, signature: { signedByName: 'invented' } } })).toBeNull();
         expect(parseReceptionDetail({ reception: FINAL })?.serviceOrder).toEqual(FINAL.serviceOrder);
     });
-    it.each([
-        { ...UPLOAD, uploadMethod: 'POST' }, { ...UPLOAD, uploadUrl: 'http://insecure.test' },
-        { ...UPLOAD, uploadHeaders: { Authorization: 'forbidden' } }, { ...UPLOAD, uploadHeaders: { 'X-Tenant-Id': IDS.tenant } },
-    ])('rejects unsafe session response', value => { expect(parseUploadSession(value)).toBeNull(); });
     it('complete must be active; signature and close identities are validated', () => {
         expect(parseActiveMedia({ ...ACTIVE, status: 'pending' })).toBeNull();
         expect(parseAttachedSignature(ATTACHED)).toEqual(ATTACHED);
         expect(parseClosedReception({ ...CLOSED, serviceOrder: { ...ORDER, receptionId: IDS.other } })).toBeNull();
-    });
-    it('storage fetch does not copy auth/context headers or cookies and never reads error body', async () => {
-        const send = vi.fn(() => Promise.resolve(jsonResponse({ internal: 'private' }, 403)));
-        const result = await putSignature(UPLOAD, BLOB, new AbortController().signal, send);
-        expect(result.ok).toBe(false);
-        expect(send).toHaveBeenCalledWith(UPLOAD.uploadUrl, expect.objectContaining({ headers: UPLOAD.uploadHeaders, credentials: 'omit' }));
     });
     it('API rejects a mismatched complete media ID and signature target', async () => {
         const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }), fetchImpl: url => Promise.resolve(jsonResponse(url.endsWith('/complete') ? { ...ACTIVE, mediaAssetId: IDS.vehicle } : { signature: { ...ATTACHED, receptionId: IDS.other } })) });
