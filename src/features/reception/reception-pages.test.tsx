@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CONSENT, CUSTOMER, DETAIL, errorResponse, IDS, jsonResponse, NOTICE, OWNER, RECEPTION, renderReception, SUMMARY, TECH, TIME, VEHICLE, type Call } from '@/test/render-reception';
 import type { FetchResponse } from '@/shared/api/http-client';
 async function click(name: string) { fireEvent.click(await screen.findByRole('button', { name })); }
@@ -75,10 +75,22 @@ describe('reception list and routing', () => {
         expect(h.calls).toHaveLength(2);
     });
     it('enforces Retry-After before enabling retry', async () => {
-        renderReception('/recepciones', () => errorResponse('RATE_LIMIT_EXCEEDED', 429, '1'));
-        const button = await screen.findByRole('button', { name: 'Reintentar' });
-        expect(button.hasAttribute('disabled')).toBe(true);
-        await waitFor(() => { expect(button.hasAttribute('disabled')).toBe(false); }, { timeout: 2000 });
+        vi.useFakeTimers();
+        try {
+            await act(async () => {
+                renderReception('/recepciones', () => errorResponse('RATE_LIMIT_EXCEEDED', 429, '1'));
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            const button = screen.getByRole('button', { name: 'Reintentar' });
+            expect(button.hasAttribute('disabled')).toBe(true);
+            act(() => { vi.advanceTimersByTime(999); });
+            expect(button.hasAttribute('disabled')).toBe(true);
+            act(() => { vi.advanceTimersByTime(1); });
+            expect(button.hasAttribute('disabled')).toBe(false);
+        }
+        finally {
+            vi.useRealTimers();
+        }
     });
     it('does not call list with assigned-only or missing permissions', async () => {
         const h = renderReception('/recepciones', defaults, [{ code: 'receptions.read', scopes: ['assigned'] }]);

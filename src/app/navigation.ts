@@ -78,7 +78,7 @@ export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
           'Búsqueda por placa',
           'Selección o creación de cliente y vehículo',
           'Kilometraje, combustible y observaciones',
-          'Video, fotos, lista de comprobación, daños y firma',
+          'Video, fotos, lista de comprobación y daños',
         ],
         icon: 'reception',
         requiredPermission: 'receptions.read',

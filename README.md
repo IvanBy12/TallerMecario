@@ -33,6 +33,19 @@ Los puertos son fijos (`strictPort`): si `5173` o `4173` están ocupados, el ser
 
 `build` **no** incluye `typecheck`: ejecuta ambos por separado (es lo que hace el CI).
 
+### E2E móvil real (opt-in, Sprint 3)
+
+| Script               | Qué hace                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `npm run e2e:mobile` | Gate Playwright (Chromium móvil) contra backend, Clerk de prueba, PostgreSQL y R2 reales.         |
+| `npm run e2e:headed` | Igual, con navegador visible.                                                                     |
+| `npm run e2e`        | Gate móvil + smoke de escritorio.                                                                 |
+| `npm run e2e:list`   | Lista los casos sin necesitar credenciales.                                                       |
+| `npm run test:e2e:harness` | Pruebas del propio harness E2E, sin credenciales (requiere Chromium); corre en el CI normal. |
+
+No forma parte de `npm test` ni del CI de PR: requiere variables privadas (`.env.e2e.example`) y un ambiente de prueba.
+Detalle, variables, datos y estado del gate: [`docs/quality/s3-mobile-e2e.md`](docs/quality/s3-mobile-e2e.md).
+
 ## Estructura de `src/`
 
 ```text
