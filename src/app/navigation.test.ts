@@ -43,6 +43,12 @@ describe('estructura declarativa de navegación', () => {
     );
   });
 
+  it('las capacidades de recepción no anuncian captura de firma', () => {
+    const reception = NAVIGATION_ITEMS.find(item => item.id === 'recepciones');
+    expect(reception).toBeDefined();
+    expect(reception?.capabilities.join(' ')).not.toMatch(/firma/i);
+  });
+
   it('declara permisos del catálogo backend', () => {
     expect(NAVIGATION_ITEMS.every((item) => item.requiredPermission !== null)).toBe(true);
   });

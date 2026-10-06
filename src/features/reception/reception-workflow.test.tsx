@@ -116,11 +116,17 @@ describe('close and handoff', () => {
         fireEvent.click(within(await confirmation()).getByRole('button', { name: 'Cancelar' }));
         expect(screen.queryByRole('dialog')).toBeNull(); expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cerrar recepción' })); expect(mutation(h.calls, '/close')).toHaveLength(0);
     });
-    it.each(['RECEPTION_MILEAGE_CONFLICT', 'RECEPTION_NOT_FOUND', 'RECEPTION_NOT_CLOSABLE', 'RECEPTION_ORDER_INTEGRITY_ERROR'])('handles %s safely with request reference', async code => {
+    it.each(['RECEPTION_MILEAGE_CONFLICT', 'RECEPTION_NOT_FOUND', 'RECEPTION_NOT_CLOSABLE', 'RECEPTION_ORDER_INTEGRITY_ERROR', 'RECEPTION_SIGNATURE_REQUIRED', 'SIGNATURE_REQUIRED'])('handles %s safely with request reference', async code => {
         current = DETAIL;
         const h = renderReception(route, call => call.url.pathname.endsWith('/close') ? errorResponse(code, code === 'RECEPTION_ORDER_INTEGRITY_ERROR' ? 500 : 409) : defaults(call), permissions);
         await confirmClose(); await screen.findAllByText('request-test');
         expect(screen.queryByText('PRIVATE BACKEND COPY MUST NEVER APPEAR')).toBeNull();
+        if (code === 'RECEPTION_SIGNATURE_REQUIRED' || code === 'SIGNATURE_REQUIRED') {
+            expect(screen.getAllByText('El servidor requiere una versión anterior del flujo de recepción. Actualiza el backend antes de cerrar la recepción.').length).toBeGreaterThan(0);
+            expect(screen.queryByText(/Registra la firma/)).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Registrar firma' })).toBeNull();
+            expect(h.calls.some(call => /upload-sessions|\/signature$/.test(call.url.pathname))).toBe(false);
+        }
         if (code === 'RECEPTION_MILEAGE_CONFLICT') {
             const edit = screen.getByRole('button', { name: 'Volver a edición' });
             fireEvent.click(edit); await screen.findByRole('button', { name: 'Guardar cambios' });
