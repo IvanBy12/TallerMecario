@@ -18,7 +18,6 @@ export async function putMedia(
   if (target === null || !Number.isFinite(expiresAt)) {
     return { ok: false, failure: storageFailure('invalid_upload_target') };
   }
-  if (expiresAt <= Date.now()) return { ok: false, failure: storageFailure('session_expired') };
 
   let onAbort = () => {};
   const aborted = new Promise<typeof ABORTED>(resolve => {

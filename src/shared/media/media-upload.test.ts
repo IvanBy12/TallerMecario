@@ -48,10 +48,16 @@ describe('direct signed PUT', () => {
     }
     expect(send).not.toHaveBeenCalled();
   });
-  it('detects known session expiry without issuing a request', async () => {
-    const send = vi.fn<StorageFetch>(() => Promise.resolve(response()));
-    expect(await putMedia({ ...UPLOAD_SESSION, expiresAt: '2000-01-01T00:00:00Z' }, blob, new AbortController().signal, send)).toEqual({ ok: false, failure: { source: 'storage', kind: 'session_expired', status: null } });
-    expect(send).not.toHaveBeenCalled();
+  it.each([200, 403])('a device clock ahead of expiresAt allows the PUT and defers to storage status %s', async status => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2100-01-01T00:00:00Z'));
+    expect(Date.parse(UPLOAD_SESSION.expiresAt)).toBeLessThan(Date.now());
+    const send = vi.fn<StorageFetch>(() => Promise.resolve(response(status)));
+    expect(await putMedia(UPLOAD_SESSION, blob, new AbortController().signal, send)).toEqual(status === 200
+      ? { ok: true, data: null }
+      : { ok: false, failure: { source: 'storage', kind: 'signed_url_rejected', status: 403 } });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[0]).toBe(UPLOAD_SESSION.uploadUrl);
+    expect(send.mock.calls[0]?.[1].method).toBe('PUT');
   });
   it('already-aborted signal prevents any request', async () => {
     const send = vi.fn<StorageFetch>(() => Promise.resolve(response()));
