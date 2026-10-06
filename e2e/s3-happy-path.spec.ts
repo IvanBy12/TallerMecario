@@ -1,11 +1,8 @@
-import fs from 'node:fs';
-
 import { expect, test } from '@playwright/test';
 
 import { field, probeApi } from './support/api-probe';
 import { e2eEnv, newRunId, STATE_FILES } from './support/env';
 import { assertMobileRuntime } from './support/mobile-runtime';
-import { recordNetwork, signatureFlowOf, type SignatureFlowSummary } from './support/network-evidence';
 import {
   closeReception,
   createReceptionViaUi,
@@ -15,15 +12,14 @@ import {
   inspectionFor,
   intakeFor,
   orderNumberShown,
-  registerSignature,
   runFixture,
   type VehiclePath,
 } from './support/reception-flow';
 
 /**
- * Gate móvil Sprint 3 — flujo feliz REAL (E2E-01) y sus comprobaciones dependientes: idempotencia del cierre (E2E-02),
- * historial inicial (E2E-03) y evidencia técnica de firma/R2 (E2E-06). Sin mocks ni page.route(): navegador → Clerk real →
- * backend real → PostgreSQL real → R2 real. Las pruebas son dependientes en orden (serial).
+ * Gate móvil Sprint 3 — recepción e inspección → cierre → orden, sin firma digital ni subida R2.
+ * E2E-02 verifica idempotencia y E2E-03 el estado inicial. Decisión del usuario: 2026-10-05.
+ * Sin mocks: navegador → Clerk real → backend real → PostgreSQL real. Ejecución serial.
  */
 
 test.use({ storageState: STATE_FILES.advisor });
@@ -34,7 +30,6 @@ interface RunState {
   receptionId: string;
   vehiclePath: VehiclePath;
   orderNumber: string;
-  signatureFlow: SignatureFlowSummary;
 }
 let run: RunState | undefined;
 
@@ -43,7 +38,7 @@ function closedRun(): RunState {
   return run;
 }
 
-test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección → firma real → cierre → orden', async ({ page }, testInfo) => {
+test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección → cierre → orden', async ({ page }, testInfo) => {
   const env = e2eEnv();
   // El gate es móvil y táctil: la configuración del proyecto lo exige y el navegador lo confirma en runtime (más abajo).
   expect(testInfo.project.use.hasTouch, 'el proyecto del gate debe ser táctil').toBe(true);
@@ -51,7 +46,11 @@ test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección
   const fixture = runFixture(newRunId());
   const intake = intakeFor(fixture.runId);
   const inspection = inspectionFor(fixture.runId);
-  const evidence = recordNetwork(page, env.apiOrigin);
+  let signatureOrMediaRequests = 0;
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path === '/api/v1/reception-acceptance-document' || path.startsWith('/api/v1/media/') || path.endsWith('/signature')) signatureOrMediaRequests += 1;
+  });
   let receptionId = '';
   let vehiclePath: VehiclePath = 'existing';
 
@@ -71,10 +70,10 @@ test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección
     const created = await createReceptionViaUi(page, fixture, intake);
     receptionId = created.receptionId;
     vehiclePath = created.vehiclePath;
-    await expect(page.getByText(`${intake.mileageKm} km`)).toBeVisible();
-    await expect(page.getByText(`${intake.fuelLevelPct}%`)).toBeVisible();
-    await expect(page.getByText(intake.customerNotes)).toBeVisible();
-    await expect(page.getByText(intake.advisorNotes)).toBeVisible();
+    await expect(page.getByText(`${intake.mileageKm} km`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`${intake.fuelLevelPct}%`, { exact: true })).toBeVisible();
+    await expect(page.getByText(intake.customerNotes, { exact: true })).toBeVisible();
+    await expect(page.getByText(intake.advisorNotes, { exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
   });
 
@@ -85,13 +84,10 @@ test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección
     await expectInspectionPersisted(page, inspection);
   });
 
-  await test.step('firma: documento de aceptación real → sesión de subida → PUT R2 → complete → attach', async () => {
-    await registerSignature(page, `Firmante E2E ${fixture.runId}`);
-  });
-
-  // La cadena debe estar CORRELACIONADA: mismo uploadSessionId/mediaAssetId, PUT al origen y ruta de la uploadUrl y attach en esta recepción.
-  await evidence.settled();
-  const signatureFlow = signatureFlowOf(evidence, { receptionId });
+  await expect(page.getByLabel('Firma manuscrita de recepción')).toHaveCount(0);
+  const unsigned = await probeApi(page, env.apiOrigin, { method: 'GET', path: `/api/v1/receptions/${receptionId}`, tenantId: env.tenantId });
+  expect(unsigned.status).toBe(200);
+  expect(field(unsigned.json, 'reception', 'signature')).toBeNull();
 
   let orderNumber = '';
   await test.step('cierre: confirmar diálogo → recepción cerrada → orden generada', async () => {
@@ -101,7 +97,8 @@ test('E2E-01 flujo feliz móvil: login → taller → recepción → inspección
     await expect(page.getByText('Generada correctamente')).toBeVisible();
   });
 
-  run = { runId: fixture.runId, receptionId, vehiclePath, orderNumber, signatureFlow };
+  expect(signatureOrMediaRequests, 'el flujo no solicita firma digital ni media/R2').toBe(0);
+  run = { runId: fixture.runId, receptionId, vehiclePath, orderNumber };
   await testInfo.attach('e2e-01-run', {
     body: JSON.stringify({ runId: fixture.runId, receptionId, vehiclePath, orderNumber }, null, 2),
     contentType: 'application/json',
@@ -125,6 +122,7 @@ test('E2E-02 idempotencia real del cierre: recarga, misma orden y reintento de c
   const before = await probeApi(page, env.apiOrigin, { method: 'GET', path, tenantId: env.tenantId });
   expect(before.status).toBe(200);
   expect(field(before.json, 'reception', 'status')).toBe('closed');
+  expect(field(before.json, 'reception', 'signature')).toBeNull();
   const orderId = field(before.json, 'reception', 'serviceOrder', 'id');
   expect(typeof orderId).toBe('string');
   expect(field(before.json, 'reception', 'serviceOrder', 'orderNumber')).toBe(orderNumber);
@@ -164,28 +162,4 @@ test('E2E-03 historial: estado inicial de la orden observable; el historial pers
       'TallerMecarioB tests/reception-api/close.test.cjs («close persists exactly one order, history, mileage and audit; retry is read-only») ' +
       'y scripts/staging-reception-e2e.cjs; ver docs/quality/s3-mobile-e2e.md.',
   });
-});
-
-test('E2E-06 evidencia de firma/R2: session → PUT real → media activa → firma registrada', async ({ page }, testInfo) => {
-  const env = e2eEnv();
-  const { signatureFlow, receptionId } = closedRun();
-  // La firma queda persistida y visible tras el cierre (el detalle del backend la expone como resumen).
-  await page.goto(`/recepciones/${receptionId}`);
-  await expect(page.getByText('Firma registrada', { exact: true })).toBeVisible({ timeout: 60_000 });
-  const detail = await probeApi(page, env.apiOrigin, { method: 'GET', path: `/api/v1/receptions/${receptionId}`, tenantId: env.tenantId });
-  expect(typeof field(detail.json, 'reception', 'signature', 'signatureId')).toBe('string');
-  const summary = {
-    receptionId,
-    uploadSessionCreated: { route: signatureFlow.uploadSessionCreated.route, status: signatureFlow.uploadSessionCreated.status, facts: signatureFlow.uploadSessionCreated.facts },
-    objectStoragePut: { route: signatureFlow.objectStoragePut.route, status: signatureFlow.objectStoragePut.status },
-    mediaActivated: { route: signatureFlow.mediaActivated.route, status: signatureFlow.mediaActivated.status, facts: signatureFlow.mediaActivated.facts },
-    signatureRegistered: { route: signatureFlow.signatureRegistered.route, status: signatureFlow.signatureRegistered.status, facts: signatureFlow.signatureRegistered.facts },
-  };
-  expect(summary.uploadSessionCreated.facts).toMatchObject({ returnedUploadSession: true, returnedSignedUploadUrl: true });
-  expect(summary.mediaActivated.facts).toMatchObject({ mediaStatus: 'active', sizeBytesPositive: true });
-  expect(summary.signatureRegistered.facts).toMatchObject({ returnedSignatureId: true });
-  const serialized = JSON.stringify(summary, null, 2);
-  expect(serialized, 'la evidencia no contiene URL firmadas ni tokens').not.toMatch(/https?:\/\/|X-Amz|Bearer|Authorization/i);
-  fs.writeFileSync(testInfo.outputPath('s3-signature-r2-evidence.json'), serialized);
-  await testInfo.attach('s3-signature-r2-evidence', { body: serialized, contentType: 'application/json' });
 });

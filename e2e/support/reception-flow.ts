@@ -183,14 +183,14 @@ export async function inspectChecklistAndDamage(page: Page, item: InspectionFixt
   const checklistForm = page.getByRole('form', { name: 'Edición de checklist' });
   await checklistForm.getByLabel('Código del elemento', { exact: true }).fill(item.checklistCode);
   await checklistForm.getByLabel('Elemento del checklist', { exact: true }).fill(item.checklistLabel);
-  await checklistForm.getByLabel('Estado del elemento', { exact: true }).selectOption({ label: 'Novedad' });
+  await checklistForm.getByRole('combobox').selectOption('issue');
   await checklistForm.getByLabel('Notas del checklist (opcional)', { exact: true }).fill(item.checklistNotes);
   await checklistForm.getByRole('button', { name: 'Guardar checklist' }).click();
   await expect(page.getByText(`${item.checklistLabel}: Novedad`)).toBeVisible();
 
   await page.getByRole('button', { name: `Editar elemento ${item.checklistLabel}` }).click();
   const editForm = page.getByRole('form', { name: 'Edición de checklist' });
-  await editForm.getByLabel('Estado del elemento', { exact: true }).selectOption({ label: 'Correcto' });
+  await editForm.getByRole('combobox').selectOption('ok');
   await editForm.getByRole('button', { name: 'Guardar checklist' }).click();
   await expect(page.getByText(`${item.checklistLabel}: Correcto`)).toBeVisible();
 
@@ -198,7 +198,7 @@ export async function inspectChecklistAndDamage(page: Page, item: InspectionFixt
   const damageForm = page.getByRole('form', { name: 'Edición de daño' });
   await damageForm.getByLabel('Zona', { exact: true }).fill(item.damageZone);
   await damageForm.getByLabel('Tipo de daño', { exact: true }).fill(item.damageType);
-  await damageForm.getByLabel('Severidad', { exact: true }).selectOption({ label: 'Moderado' });
+  await damageForm.getByRole('combobox').selectOption('moderate');
   await damageForm.getByLabel('Descripción opcional', { exact: true }).fill(item.damageDescription);
   await damageForm.getByRole('button', { name: 'Guardar daño' }).click();
   await expect(page.getByText(`${item.damageZone} · ${item.damageType} · Moderado`)).toBeVisible();
