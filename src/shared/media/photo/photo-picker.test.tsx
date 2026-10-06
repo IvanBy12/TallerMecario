@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { StrictMode, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '@/shared/api/http-client';
@@ -169,5 +169,105 @@ describe('PhotoPicker local-only behavior', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Quitar todas las fotos' })); view.unmount();
     await act(async () => { await Promise.resolve(); });
     expect(fetchSpy).not.toHaveBeenCalled(); expect(apiSpy).not.toHaveBeenCalled(); expect(mediaSpy).not.toHaveBeenCalled(); expect(putSpy).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('PhotoPicker focus after explicit removal', () => {
+  it('removes the middle button and focuses the next photo at the same position', () => {
+    render(<PhotoPicker />); acknowledge(); choose([photo(), photo(), photo()]);
+    const removed = screen.getByRole('button', { name: 'Quitar foto 2' });
+    const next = screen.getByRole('button', { name: 'Quitar foto 3' });
+    removed.focus(); fireEvent.click(removed);
+    expect(removed.isConnected).toBe(false);
+    expect(document.activeElement).toBe(next);
+    expect(next.getAttribute('aria-label')).toBe('Quitar foto 2');
+  });
+  it('removes the final photo and focuses the previous remaining remove button', () => {
+    render(<PhotoPicker />); acknowledge(); choose([photo(), photo(), photo()]);
+    const previous = screen.getByRole('button', { name: 'Quitar foto 2' });
+    const removed = screen.getByRole('button', { name: 'Quitar foto 3' });
+    removed.focus(); fireEvent.click(removed);
+    expect(removed.isConnected).toBe(false);
+    expect(document.activeElement).toBe(previous);
+  });
+  it('removes the only photo and focuses the gallery control', () => {
+    render(<PhotoPicker />); acknowledge(); choose([photo()]);
+    const removed = screen.getByRole('button', { name: 'Quitar foto 1' });
+    removed.focus(); fireEvent.click(removed);
+    expect(removed.isConnected).toBe(false);
+    expect(document.activeElement).toBe(input());
+  });
+  it('clears all photos and focuses the gallery after the clear control becomes disabled', () => {
+    render(<PhotoPicker />); acknowledge(); choose([photo(), photo()]);
+    const clear = screen.getByRole('button', { name: 'Quitar todas las fotos' });
+    clear.focus(); fireEvent.click(clear);
+    expect(screen.queryByRole('button', { name: 'Quitar foto 1' })).toBeNull();
+    expect(clear.hasAttribute('disabled')).toBe(true);
+    expect(document.activeElement).toBe(input());
+  });
+  it('focuses the notice control if the gallery is disabled after the notice is unchecked', () => {
+    render(<PhotoPicker />); acknowledge(); choose([photo()]); acknowledge();
+    expect(input().disabled).toBe(true);
+    const removed = screen.getByRole('button', { name: 'Quitar foto 1' });
+    removed.focus(); fireEvent.click(removed);
+    expect(removed.isConnected).toBe(false);
+    expect(document.activeElement).toBe(screen.getByLabelText('He leído este aviso'));
+  });
+  it('mouse down does not move focus before removal completes', () => {
+    render(<PhotoPicker />); acknowledge(); choose([photo(), photo()]);
+    const removed = screen.getByRole('button', { name: 'Quitar foto 1' });
+    const next = screen.getByRole('button', { name: 'Quitar foto 2' });
+    removed.focus(); fireEvent.mouseDown(removed);
+    expect(removed.isConnected).toBe(true);
+    expect(document.activeElement).toBe(removed);
+    fireEvent.mouseUp(removed); fireEvent.click(removed);
+    expect(removed.isConnected).toBe(false);
+    expect(document.activeElement).toBe(next);
+  });
+  it.each(['Quitar foto 1', 'Quitar todas las fotos'])('keeps unrelated focus when %s was not focused', name => {
+    render(<PhotoPicker />); acknowledge(); choose([photo(), photo()]);
+    const capture = input('Tomar foto'); capture.focus();
+    fireEvent.click(screen.getByRole('button', { name }));
+    expect(document.activeElement).toBe(capture);
+  });
+  it('does not move focus on ordinary rerenders after restoring it', () => {
+    const view = render(<StrictMode><PhotoPicker /></StrictMode>); acknowledge(); choose([photo(), photo()]);
+    const removed = screen.getByRole('button', { name: 'Quitar foto 1' });
+    removed.focus(); fireEvent.click(removed);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Quitar foto 1' }));
+    const capture = input('Tomar foto'); capture.focus();
+    view.rerender(<StrictMode><PhotoPicker /></StrictMode>);
+    choose([photo()]);
+    expect(document.activeElement).toBe(capture);
+  });
+  it.each(['remove', 'clear'])('keeps %s focus restoration inside the active picker instance', action => {
+    render(<><PhotoPicker /><PhotoPicker /></>);
+    const pickers = screen.getAllByRole('region', { name: 'Selección local de fotos' });
+    const [first, second] = pickers;
+    if (!first || !second) throw new Error('fixture pickers missing');
+    for (const picker of pickers) {
+      fireEvent.click(within(picker).getByLabelText('He leído este aviso'));
+      fireEvent.change(within(picker).getByLabelText('Seleccionar fotos'), { target: { files: [photo()] } });
+    }
+    const control = within(second).getByRole('button', { name: action === 'remove' ? 'Quitar foto 1' : 'Quitar todas las fotos' });
+    control.focus(); fireEvent.click(control);
+    expect(document.activeElement).toBe(within(second).getByLabelText('Seleccionar fotos'));
+    expect(within(first).getByRole('button', { name: 'Quitar foto 1' }).isConnected).toBe(true);
+    expect(within(first).getByLabelText('Seleccionar fotos').id).not.toBe(within(second).getByLabelText('Seleccionar fotos').id);
+  });
+  it('waits for DOM removal when the preview list consumer defers its update', () => {
+    const photos: readonly PhotoSelection[] = [{ id: 'a', file: photo() }, { id: 'b', file: photo() }];
+    const remove = vi.fn();
+    const view = render(<PhotoPreviewList photos={photos} onRemove={remove} />);
+    const removed = screen.getByRole('button', { name: 'Quitar foto 1' });
+    const next = screen.getByRole('button', { name: 'Quitar foto 2' });
+    removed.focus(); fireEvent.click(removed);
+    expect(remove).toHaveBeenCalledWith('a');
+    expect(removed.isConnected).toBe(true);
+    expect(document.activeElement).toBe(removed);
+    view.rerender(<PhotoPreviewList photos={photos.slice(1)} onRemove={remove} />);
+    expect(removed.isConnected).toBe(false);
+    expect(document.activeElement).toBe(next);
   });
 });

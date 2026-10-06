@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useId, useState, type ChangeEvent } from 'react';
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ChangeEvent } from 'react';
 import { StatusBanner } from '@/shared/ui/status-banner';
 import { PhotoPreviewList } from './photo-preview-list';
 import { usePhotoSelection } from './photo-selection';
@@ -17,11 +17,25 @@ export interface PhotoPickerProps {
 
 export function PhotoPicker({ policy, disabled = false, onSelectionChange }: PhotoPickerProps) {
   const id = useId();
+  const gallery = useRef<HTMLInputElement>(null);
+  const acknowledgement = useRef<HTMLInputElement>(null);
+  const pendingClearFocus = useRef<HTMLButtonElement | null>(null);
   const [noticeRead, setNoticeRead] = useState(false);
   const selection = usePhotoSelection(policy);
   const blocked = disabled || !noticeRead;
   const reportSelection = useEffectEvent((photos: readonly PhotoSelection[]) => { onSelectionChange?.(photos); });
   useEffect(() => { reportSelection(selection.photos); }, [selection.photos]);
+  const focusSelection = () => {
+    if (gallery.current && !gallery.current.disabled) gallery.current.focus();
+    else acknowledgement.current?.focus();
+  };
+  useLayoutEffect(() => {
+    const button = pendingClearFocus.current;
+    if (!button || selection.photos.length > 0) return;
+    pendingClearFocus.current = null;
+    const { activeElement, body } = button.ownerDocument;
+    if (activeElement === button || activeElement === body) focusSelection();
+  }, [selection.photos]);
   const choose = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = '';
@@ -32,7 +46,7 @@ export function PhotoPicker({ policy, disabled = false, onSelectionChange }: Pho
       <p id={`${id}-notice`}>Enfoca las fotos en el vehículo y la evidencia. Evita capturar rostros/personas si no son necesarios y datos personales innecesarios.</p>
     </StatusBanner>
     <label className="photo-picker__acknowledgement">
-      <input type="checkbox" checked={noticeRead} disabled={disabled} aria-describedby={`${id}-notice`}
+      <input ref={acknowledgement} type="checkbox" checked={noticeRead} disabled={disabled} aria-describedby={`${id}-notice`}
         onChange={event => { setNoticeRead(event.currentTarget.checked); }} />
       He leído este aviso
     </label>
@@ -44,7 +58,7 @@ export function PhotoPicker({ policy, disabled = false, onSelectionChange }: Pho
       <input id={`${id}-capture`} type="file" accept="image/*" capture="environment" disabled={blocked}
         aria-describedby={`${id}-notice ${id}-instructions`} onChange={choose} />
       <label htmlFor={`${id}-gallery`}>Seleccionar fotos</label>
-      <input id={`${id}-gallery`} type="file" accept="image/*" multiple disabled={blocked}
+      <input ref={gallery} id={`${id}-gallery`} type="file" accept="image/*" multiple disabled={blocked}
         aria-describedby={`${id}-notice ${id}-instructions`} onChange={choose} />
     </div>
     <p>Las fotos permanecen solo en esta pantalla. No se han subido ni guardado.</p>
@@ -54,8 +68,11 @@ export function PhotoPicker({ policy, disabled = false, onSelectionChange }: Pho
       </ul>}
       <p>{selection.photos.length} {selection.photos.length === 1 ? 'foto seleccionada' : 'fotos seleccionadas'}</p>
     </div>
-    <PhotoPreviewList photos={selection.photos} onRemove={selection.remove} disabled={disabled} />
+    <PhotoPreviewList photos={selection.photos} onRemove={selection.remove} onEmptyFocus={focusSelection} disabled={disabled} />
     <button type="button" className="ui-button" disabled={disabled || selection.photos.length === 0}
-      onClick={selection.clear}>Quitar todas las fotos</button>
+      onClick={event => {
+        if (event.currentTarget.ownerDocument.activeElement === event.currentTarget) pendingClearFocus.current = event.currentTarget;
+        selection.clear();
+      }}>Quitar todas las fotos</button>
   </section>;
 }
