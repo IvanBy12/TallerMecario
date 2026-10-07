@@ -6,8 +6,9 @@ import type { ApiResult } from '@/shared/api/http-client';
 import { CONFIRMED_MEDIA, UPLOAD_DTO, UPLOAD_SESSION } from '@/test/media-fixtures';
 import { createMediaClient } from './media-client';
 import { createUploadTask, advanceUploadProgress } from './upload-task';
+import * as executionModule from './upload-task-execution';
 import type { MediaApiAdapter, MediaResult, StorageFetch, StorageResponse, StorageResult } from './media-types';
-import type { UploadAttempt, UploadObserver, UploadTaskState, UploadTransport } from './upload-task-types';
+import type { UploadAttempt, UploadExecutor, UploadObserver, UploadTaskState, UploadTransport } from './upload-task-types';
 
 const blob = new Blob(['abc']);
 const response = (status = 200): StorageResponse => ({ status, ok: status === 200, redirected: false, type: 'basic' });
@@ -18,6 +19,23 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 async function flush() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
+function inspectExecutions() {
+  const contexts: executionModule.UploadExecution<unknown>[] = [];
+  const create = executionModule.createUploadExecution;
+  vi.spyOn(executionModule, 'createUploadExecution').mockImplementation(<Input>(input: Input, blob: Blob) => {
+    const execution = create(input, blob);
+    contexts.push(execution);
+    return execution;
+  });
+  return contexts;
+}
+function eventLoopTurn() {
+  return new Promise<void>(resolve => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
+    channel.port2.postMessage(null);
+  });
+}
 function setup(uploadTransport?: UploadTransport) {
   const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }) });
   const api = {
@@ -116,6 +134,7 @@ describe('upload execution and secure production path', () => {
     await begin(h.task).done;
     const kinds: Record<number, string> = { 403: 'signed_url_rejected', 412: 'upload_conflict', 413: 'payload_too_large', 415: 'unsupported_media_type', 422: 'unprocessable_upload', 500: 'unexpected_status' };
     expect(h.task.getState()).toMatchObject({ phase: status === 403 || status === 412 ? 'needs_restart' : status === 500 ? 'ambiguous' : 'failed', failure: { source: 'storage', kind: kinds[status], status }, recovery: { kind: [413, 415, 422].includes(status) ? 'user_action' : 'contract_dependency' } });
+    if (status === 412) expect(h.task.getState()).toMatchObject({ recovery: { kind: 'contract_dependency', reason: 'reconciliation' } });
     expect(h.task.restart(undefined, blob).ok).toBe(false);
     await flush(); expect(h.storageFetch).toHaveBeenCalledTimes(1); expect(h.api.createUploadSession).toHaveBeenCalledTimes(1);
     expect(h.api.completeUploadSession).not.toHaveBeenCalled();
@@ -288,4 +307,167 @@ describe('reentrant cancellation and phase boundaries', () => {
     expect(task.getState()).toBe(completing);
     result.resolve({ ok: true, data: CONFIRMED_MEDIA }); await attempt.done;
   });
+});
+
+describe('subscriber isolation and publication snapshots', () => {
+  function synthetic() {
+    const pending = deferred<MediaResult>();
+    const upload = vi.fn<UploadExecutor<undefined>['upload']>(() => pending.promise);
+    const task = createUploadTask({ upload });
+    return { task, upload, pending };
+  }
+  it.each([
+    ['uploading', 'cancel', 'canceled'], ['completing', 'dispose', 'disposed'],
+  ] as const)('throwing subscribers cannot stop %s → %s or abort/cleanup', async (phase, action, terminal) => {
+    const h = synthetic();
+    const bad = () => { throw new Error('external subscriber'); };
+    const add = vi.spyOn(Set.prototype, 'add');
+    h.task.subscribe(bad);
+    const listeners = add.mock.contexts[add.mock.calls.findIndex(([value]) => value === bad)];
+    add.mockRestore();
+    if (!(listeners instanceof Set)) throw new Error('Expected subscriber Set');
+    expect(listeners.has(bad)).toBe(true);
+    const phases: string[] = [];
+    h.task.subscribe(() => { phases.push(h.task.getState().phase); });
+    const attempt = begin(h.task); await flush();
+    const call = h.upload.mock.calls[0];
+    if (!call) throw new Error('Expected executor dispatch');
+    const signal = call[2], observer = call[3];
+    const remove = vi.spyOn(signal, 'removeEventListener');
+    observer.onPhase('uploading');
+    if (phase === 'completing') observer.onPhase('completing');
+    expect(h.task.getState().phase).toBe(phase);
+    expect(() => { h.task[action](); }).not.toThrow();
+    expect(signal.aborted).toBe(true);
+    expect(h.task.getState().phase).toBe(terminal);
+    await expect(attempt.done).resolves.toBeUndefined();
+    expect(phases).toEqual(phase === 'uploading'
+      ? ['preparing', 'uploading', 'canceled'] : ['preparing', 'uploading', 'completing', 'disposed']);
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+    if (action === 'dispose') {
+      expect(listeners.size).toBe(0);
+      h.task.subscribe(bad);
+      expect(listeners.size).toBe(0);
+    }
+  });
+  it.each(['result', 'exception'] as const)('throwing terminal failure subscriber cannot reject done on %s path', async path => {
+    const h = synthetic(), executions = inspectExecutions();
+    const phases: string[] = [];
+    h.task.subscribe(() => { if (h.task.getState().phase === 'failed') throw new Error('subscriber'); });
+    h.task.subscribe(() => { phases.push(h.task.getState().phase); });
+    const attempt = begin(h.task); await flush();
+    if (path === 'result') h.pending.resolve({ ok: false, failure: { source: 'storage', kind: 'payload_too_large', status: 413 } });
+    else h.pending.reject(new Error('executor'));
+    await expect(attempt.done).resolves.toBeUndefined();
+    expect(h.task.getState()).toMatchObject({ phase: 'failed', failure: path === 'result'
+      ? { source: 'storage', kind: 'payload_too_large', status: 413 }
+      : { source: 'api', stage: 'create', kind: 'network' } });
+    expect(phases).toEqual(['preparing', 'failed']);
+    expect(executions[0]?.payload).toBeNull();
+  });
+  it('throwing subscriber does not block a subsequent successful terminal subscriber', async () => {
+    const h = setup(), phases: string[] = [];
+    h.task.subscribe(() => { throw new Error('subscriber'); });
+    h.task.subscribe(() => { phases.push(h.task.getState().phase); });
+    await expect(begin(h.task).done).resolves.toBeUndefined();
+    expect(phases).toEqual(['preparing', 'uploading', 'completing', 'succeeded']);
+  });
+  it.each(['cancel', 'dispose'] as const)('nested %s stops the superseded outer notification cycle', async action => {
+    const h = synthetic(), observed: string[] = [];
+    h.task.subscribe(() => {
+      if (h.task.getState().phase === 'uploading') {
+        h.task[action]();
+        throw new Error('subscriber after nested publication');
+      }
+    });
+    h.task.subscribe(() => { observed.push(h.task.getState().phase); });
+    const attempt = begin(h.task); await flush();
+    h.upload.mock.calls[0]?.[3].onPhase('uploading');
+    await attempt.done;
+    // No extra delivery from the old uploading cycle after the nested terminal state.
+    expect(observed).toEqual(['preparing', action === 'cancel' ? 'canceled' : 'disposed']);
+  });
+  it('a subscriber added while publishing starts on the next publication', async () => {
+    const h = synthetic(), third = vi.fn();
+    h.task.subscribe(() => { h.task.subscribe(third); });
+    const second = vi.fn(); h.task.subscribe(second);
+    const attempt = begin(h.task);
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(third).not.toHaveBeenCalled();
+    await flush(); h.upload.mock.calls[0]?.[3].onPhase('uploading');
+    expect(second).toHaveBeenCalledTimes(2);
+    expect(third).toHaveBeenCalledTimes(1);
+    h.task.cancel(); await attempt.done;
+  });
+  it('a subscriber removed before its snapshot turn is skipped', async () => {
+    const h = synthetic(), second = vi.fn(); let unsubscribe = () => {};
+    h.task.subscribe(() => { unsubscribe(); });
+    unsubscribe = h.task.subscribe(second);
+    const attempt = begin(h.task);
+    expect(second).not.toHaveBeenCalled();
+    await flush(); h.upload.mock.calls[0]?.[3].onPhase('uploading');
+    expect(second).not.toHaveBeenCalled();
+    h.task.cancel(); await attempt.done;
+  });
+});
+
+describe('executor abort boundary and payload ownership', () => {
+  it.each(['cancel', 'dispose'] as const)('%s settles done even for a forever-pending executor', async action => {
+    const upload = vi.fn<UploadExecutor<undefined>['upload']>(() => new Promise<MediaResult>(() => {}));
+    const task = createUploadTask({ upload }), attempt = begin(task);
+    let settled = false;
+    void attempt.done.then(() => { settled = true; });
+    await flush(); task[action](); await flush();
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[2].aborted).toBe(true);
+    expect(settled).toBe(true);
+    await expect(attempt.done).resolves.toBeUndefined();
+  });
+  it.each([
+    ['cancel', 'resolve'], ['cancel', 'reject'], ['dispose', 'resolve'], ['dispose', 'reject'],
+  ] as const)('late executor %s/%s is consumed without state changes or publications', async (action, outcome) => {
+    const pending = deferred<MediaResult>();
+    const upload = vi.fn<UploadExecutor<undefined>['upload']>(() => pending.promise);
+    const task = createUploadTask({ upload }), listener = vi.fn(); task.subscribe(listener);
+    const attempt = begin(task); await flush(); task[action](); await attempt.done;
+    const terminal = task.getState(), calls = listener.mock.calls.length;
+    if (outcome === 'resolve') pending.resolve({ ok: true, data: CONFIRMED_MEDIA });
+    else pending.reject(new Error('late executor'));
+    const observer = upload.mock.calls[0]?.[3];
+    observer?.onPhase('uploading'); observer?.onPhase('completing'); observer?.onDispatch('complete');
+    observer?.onProgress({ loadedBytes: 3, totalBytes: 3 });
+    await flush();
+    // An event-loop turn, without a timer/sleep, allows unhandled rejection detection.
+    // Vitest fails the run on an unhandled rejection.
+    await eventLoopTurn();
+    expect(task.getState()).toBe(terminal);
+    expect(task.getState().phase).toBe(action === 'cancel' ? 'canceled' : 'disposed');
+    expect(listener).toHaveBeenCalledTimes(calls);
+  });
+  it.each(['succeeded', 'failed', 'exception', 'cancel', 'dispose', 'before_dispatch'] as const)(
+    'retained handle has a cleared execution payload after %s', async terminal => {
+      const executions = inspectExecutions();
+      const pending = deferred<MediaResult>(), input = { label: 'synthetic', file: new File(['abc'], 'fixture.bin') };
+      const task = createUploadTask<typeof input>({ upload: () => pending.promise });
+      const result = task.start(input, input.file);
+      if (!result.ok) throw new Error('Expected allowed attempt');
+      const handle = result.attempt, execution = executions[0];
+      expect(execution?.payload?.input).toBe(input);
+      expect(execution?.payload?.blob).toBe(input.file);
+      if (terminal === 'before_dispatch') handle.cancel();
+      else {
+        await flush();
+        if (terminal === 'cancel' || terminal === 'dispose') task[terminal]();
+        else if (terminal === 'exception') pending.reject(new Error('executor'));
+        else pending.resolve(terminal === 'succeeded' ? { ok: true, data: CONFIRMED_MEDIA }
+          : { ok: false, failure: { source: 'storage', kind: 'payload_too_large', status: 413 } });
+      }
+      await handle.done;
+      // Inspect the actual mutable ownership cell used by controller execution, not GC.
+      expect(execution?.payload).toBeNull();
+      expect(Object.keys(handle)).toEqual(['cancel', 'done']);
+      handle.cancel();
+      await handle.done;
+      expect(execution?.payload).toBeNull();
+    });
 });

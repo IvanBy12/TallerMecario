@@ -1,4 +1,6 @@
 import type { MediaFailure } from './media-types';
+import { createUploadExecution, executeUpload } from './upload-task-execution';
+import type { UploadExecution } from './upload-task-execution';
 import type { UploadBytes, UploadDispatch, UploadExecutor, UploadFailure, UploadProgress,
   UploadRecovery, UploadStartResult, UploadTaskState } from './upload-task-types';
 
@@ -31,7 +33,9 @@ function failureState(failure: Exclude<MediaFailure, { source: 'client' }>): Upl
   const safe = projectFailure(failure);
   if (failure.source === 'storage') {
     switch (failure.kind) {
-      case 'signed_url_rejected': case 'session_expired': case 'upload_conflict':
+      case 'upload_conflict':
+        return { phase: 'needs_restart', failure: safe, recovery: dependency('reconciliation') };
+      case 'signed_url_rejected': case 'session_expired':
         return { phase: 'needs_restart', failure: safe, recovery: dependency('new_session') };
       case 'payload_too_large': case 'unsupported_media_type': case 'unprocessable_upload':
         return { phase: 'failed', failure: safe, recovery: { kind: 'user_action' } };
@@ -56,10 +60,20 @@ export function createUploadTask<Input>(executor: UploadExecutor<Input>) {
   let state: UploadTaskState = Object.freeze({ phase: 'idle' });
   const listeners = new Set<() => void>();
   let generation = 0;
+  let publication = 0;
   let active: { id: number; abort: AbortController; dispatched: UploadDispatch | null } | null = null;
   function publish(next: UploadTaskState) {
     state = Object.freeze(next);
-    for (const listener of listeners) listener();
+    const revision = ++publication;
+    const snapshot = [...listeners];
+    for (const listener of snapshot) {
+      // A nested cancel/dispose/publication supersedes this notification cycle.
+      if (revision !== publication) break;
+      if (!listeners.has(listener)) continue;
+      try { listener(); } catch {
+        // External consumers cannot interrupt lifecycle work or other subscribers.
+      }
+    }
   }
   function cancellationRecovery(stage: UploadDispatch | null): UploadRecovery {
     return stage === null ? local : dependency(stage === 'create' ? 'create_retry' : 'reconciliation');
@@ -68,8 +82,55 @@ export function createUploadTask<Input>(executor: UploadExecutor<Input>) {
     if (active !== attempt) return;
     active = null;
     ++generation;
-    publish({ phase: 'canceled', recovery: cancellationRecovery(attempt.dispatched) });
-    attempt.abort.abort();
+    try { publish({ phase: 'canceled', recovery: cancellationRecovery(attempt.dispatched) }); }
+    finally { attempt.abort.abort(); }
+  }
+  function current(attempt: NonNullable<typeof active>) {
+    return active === attempt && generation === attempt.id && !attempt.abort.signal.aborted;
+  }
+  // Created outside start's payload scope; retained handles capture only the identity.
+  function cancelHandle(id: number) {
+    return () => { if (active?.id === id) cancelAttempt(active); };
+  }
+  function runAttempt(attempt: NonNullable<typeof active>, execution: UploadExecution<Input>) {
+    return Promise.resolve().then(async () => {
+      try {
+        if (!current(attempt)) return;
+        const result = await executeUpload(executor, execution, attempt.abort.signal, {
+          onPhase(phase) {
+            if (!current(attempt)) return;
+            if ((phase === 'uploading' && state.phase === 'preparing') ||
+                (phase === 'completing' && state.phase === 'uploading')) {
+              publish({ phase, progress: indeterminate });
+            }
+          },
+          onDispatch(stage) { if (current(attempt)) attempt.dispatched = stage; },
+          onProgress(event) {
+            if (!current(attempt) || state.phase !== 'uploading') return;
+            const progress = advanceUploadProgress(state.progress, event);
+            if (progress !== state.progress) publish({ phase: 'uploading', progress });
+          },
+        });
+        if (result === null || !current(attempt)) return;
+        active = null;
+        if (result.ok) publish({ phase: 'succeeded', media: Object.freeze({
+          mediaAssetId: result.data.mediaAssetId, status: result.data.status,
+          sizeBytes: result.data.sizeBytes, checksumSha256: result.data.checksumSha256,
+        }) });
+        else if (result.failure.source === 'client') publish({ phase: 'canceled', recovery: cancellationRecovery(attempt.dispatched) });
+        else publish(failureState(result.failure));
+      } catch {
+        if (!current(attempt)) return;
+        active = null;
+        // Adapter/extension exceptions are sanitized; after dispatch the result is uncertain.
+        const complete = attempt.dispatched === 'complete';
+        publish(failureState(attempt.dispatched === 'storage'
+          ? { source: 'storage', kind: 'network', status: null }
+          : { source: 'api', stage: complete ? 'complete' : 'create', failure: {
+            kind: 'network', status: null, code: null, requestId: null,
+          } }));
+      } finally { execution.payload = null; }
+    });
   }
   function start(input: Input, blob: Blob): UploadStartResult {
     if (state.phase === 'disposed') return { ok: false, reason: 'disposed' };
@@ -80,56 +141,17 @@ export function createUploadTask<Input>(executor: UploadExecutor<Input>) {
     }
     const attempt = { id: ++generation, abort: new AbortController(), dispatched: null as UploadDispatch | null };
     active = attempt;
-    const current = () => active === attempt && generation === attempt.id && !attempt.abort.signal.aborted;
-    function cancel() {
-      if (!current()) return;
-      cancelAttempt(attempt);
-    }
     // Defer dispatch so the returned cancel handle can stop all network work.
+    const done = runAttempt(attempt, createUploadExecution(input, blob));
     publish({ phase: 'preparing', progress: indeterminate });
-    const done = Promise.resolve().then(async () => {
-      if (!current()) return;
-      try {
-        const result = await executor.upload(input, blob, attempt.abort.signal, {
-          onPhase(phase) {
-            if (!current()) return;
-            if ((phase === 'uploading' && state.phase === 'preparing') ||
-                (phase === 'completing' && state.phase === 'uploading')) {
-              publish({ phase, progress: indeterminate });
-            }
-          },
-          onDispatch(stage) { if (current()) attempt.dispatched = stage; },
-          onProgress(event) {
-            if (!current() || state.phase !== 'uploading') return;
-            const progress = advanceUploadProgress(state.progress, event);
-            if (progress !== state.progress) publish({ phase: 'uploading', progress });
-          },
-        });
-        if (!current()) return;
-        active = null;
-        if (result.ok) publish({ phase: 'succeeded', media: Object.freeze({
-          mediaAssetId: result.data.mediaAssetId, status: result.data.status,
-          sizeBytes: result.data.sizeBytes, checksumSha256: result.data.checksumSha256,
-        }) });
-        else if (result.failure.source === 'client') publish({ phase: 'canceled', recovery: cancellationRecovery(attempt.dispatched) });
-        else publish(failureState(result.failure));
-      } catch {
-        if (!current()) return;
-        active = null;
-        // Adapter/extension exceptions are sanitized; after dispatch the result is uncertain.
-        const complete = attempt.dispatched === 'complete';
-        publish(failureState(attempt.dispatched === 'storage'
-          ? { source: 'storage', kind: 'network', status: null }
-          : { source: 'api', stage: complete ? 'complete' : 'create', failure: {
-            kind: 'network', status: null, code: null, requestId: null,
-          } }));
-      }
-    });
-    return { ok: true, attempt: { cancel, done } };
+    return { ok: true, attempt: { cancel: cancelHandle(attempt.id), done } };
   }
   return {
     getState: () => state,
-    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    subscribe(listener: () => void) {
+      if (state.phase === 'disposed') return () => {};
+      listeners.add(listener); return () => { listeners.delete(listener); };
+    },
     start,
     /** Same guard as start; never replays a retained session, PUT or complete. */
     restart: start,
@@ -143,9 +165,11 @@ export function createUploadTask<Input>(executor: UploadExecutor<Input>) {
       const attempt = active;
       active = null;
       ++generation;
-      publish({ phase: 'disposed' });
-      listeners.clear();
-      attempt?.abort.abort();
+      try { publish({ phase: 'disposed' }); }
+      finally {
+        listeners.clear();
+        attempt?.abort.abort();
+      }
     },
   };
 }

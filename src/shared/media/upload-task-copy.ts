@@ -14,7 +14,7 @@ export function uploadTaskCopy(state: UploadTaskState): string | null {
     case 'ambiguous': return 'No se pudo confirmar el resultado de la carga. Es necesario revisar su estado antes de volver a intentarlo.';
     case 'needs_restart': return state.failure.source === 'storage' && state.failure.kind === 'signed_url_rejected'
       ? 'El enlace de carga fue rechazado. Es necesario revisar la sesión antes de volver a intentarlo.'
-      : 'La carga requiere revisión antes de iniciar una nueva sesión.';
+      : 'La carga requiere revisión antes de volver a intentarlo.';
     case 'failed':
       if (state.failure.source === 'storage' && state.recovery.kind === 'user_action') return storageFailureCopy(state.failure);
       if (state.failure.source === 'api') {

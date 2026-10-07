@@ -1,5 +1,5 @@
 import type { ApiFailureKind } from '@/shared/api/api-failure';
-import type { ConfirmedMedia, MediaResult, StorageFailure, StorageResult, UploadSession } from './media-types';
+import type { ConfirmedMedia, MediaResult, StorageFailure, StorageResult, UploadTarget } from './media-types';
 
 export type UploadPhase = 'preparing' | 'uploading' | 'completing';
 export type UploadDispatch = 'create' | 'storage' | 'complete';
@@ -12,8 +12,9 @@ export interface UploadObserver {
   onDispatch(stage: UploadDispatch): void;
   onProgress(bytes: UploadBytes): void;
 }
-/** A future production implementation requires review of F01's exact redirect/header guarantees. */
-export type UploadTransport = (session: UploadSession, blob: Blob, signal: AbortSignal,
+/** Receives only the target validated by F01's parser, without session identity.
+ * A future production implementation requires review of exact redirect/header guarantees. */
+export type UploadTransport = (target: UploadTarget, blob: Blob, signal: AbortSignal,
   onProgress: (bytes: UploadBytes) => void) => Promise<StorageResult>;
 export interface UploadExecutor<Input> {
   upload(input: Input, blob: Blob, signal: AbortSignal, observer: UploadObserver): Promise<MediaResult>;

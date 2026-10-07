@@ -42,8 +42,11 @@ export function createMediaClient<Input>(deps: {
       if (isAborted(signal)) return aborted();
       observer?.onDispatch('storage');
       if (isAborted(signal)) return aborted();
+      // parseUploadSession has already applied F01's parseUploadTarget validation.
+      // The extension receives that validated target only, never a raw DTO/session.
+      const target = Object.freeze({ uploadUrl: session.uploadUrl, uploadHeaders: session.uploadHeaders });
       const uploaded = await untilAbort(signal, () => deps.uploadTransport
-        ? deps.uploadTransport(session, blob, signal, event => { if (!isAborted(signal)) observer?.onProgress(event); })
+        ? deps.uploadTransport(target, blob, signal, event => { if (!isAborted(signal)) observer?.onProgress(event); })
         : putMedia(session, blob, signal, deps.storageFetch));
       if (uploaded === ABORTED || isAborted(signal)) return aborted();
       if (!uploaded.ok) return uploaded;
