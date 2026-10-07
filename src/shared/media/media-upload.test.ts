@@ -96,7 +96,7 @@ describe('direct signed PUT', () => {
     expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
   });
   it.each([
-    [403, 'signed_url_rejected'], [413, 'payload_too_large'], [415, 'unsupported_media_type'],
+    [403, 'signed_url_rejected'], [412, 'upload_conflict'], [413, 'payload_too_large'], [415, 'unsupported_media_type'],
     [422, 'unprocessable_upload'], [500, 'unexpected_status'], [400, 'unexpected_status'],
   ])('classifies storage %s as %s without reading any error body', async (status, kind) => {
     const json = vi.fn(() => Promise.reject(new Error('body must never be read')));
