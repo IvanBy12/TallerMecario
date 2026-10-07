@@ -1113,3 +1113,14 @@ a.dash-action:hover { background: var(--dash-soft); border-color: var(--dash-blu
 .photo-preview-list li { min-width: 0; display: grid; gap: var(--tm-space-2); padding: var(--tm-space-3); border: 1px solid var(--tm-border); border-radius: var(--tm-radius); }
 .photo-preview-list img { display: block; width: 100%; max-width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--tm-surface-muted); border-radius: var(--tm-radius-sm); }
 @media (min-width: 48rem) { .photo-preview-list { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.video-picker { display: grid; gap: var(--tm-space-3); min-width: 0; }
+.video-picker p { margin: 0; overflow-wrap: anywhere; }
+.video-picker__acknowledgement { display: flex; gap: var(--tm-space-2); align-items: center; min-height: 44px; }
+.video-picker__controls { display: grid; gap: var(--tm-space-2); min-width: 0; }
+.video-picker input[type="file"] { width: 100%; min-width: 0; min-height: 44px; font: inherit; }
+.video-picker input[type="file"]::file-selector-button { min-height: 44px; font: inherit; }
+.video-picker .ui-button { min-height: 44px; white-space: normal; }
+.video-picker :disabled { opacity: .6; cursor: default; }
+.video-preview { display: grid; gap: var(--tm-space-2); min-width: 0; }
+.video-preview video { display: block; width: 100%; max-width: 100%; max-height: 60vh; object-fit: contain; background: var(--tm-surface-muted); border-radius: var(--tm-radius-sm); }
