@@ -405,10 +405,29 @@ describe('F05 focused review regressions', () => {
     expect(screen.getByText('La carga de evidencia fotográfica y de video todavía no está disponible.')).toBeDefined();
     expect(screen.queryByRole('button', { name: /Mostrar aviso|Subir/ })).toBeNull(); expect(screen.queryByLabelText(/Crear la recepción sin estos archivos locales/)).toBeNull();
     expect(screen.queryByLabelText('El propietario declara ser mayor de edad para la captura de evidencia.')).toBeNull();
-    expect(create).not.toHaveBeenCalled(); click('Crear recepción'); await screen.findByRole('heading', { name: 'Detalle de recepción' });
-    expect(screen.getByText('La consulta de evidencia fotográfica y de video todavía no está disponible.')).toBeDefined();
+    expect(screen.queryByLabelText('Seleccionar fotos')).toBeNull(); expect(screen.queryByLabelText('Seleccionar video')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Crear recepción' }).hasAttribute('disabled')).toBe(false);
     expect(document.body.textContent).not.toMatch(/contrato|reconciliación|Track A|DTO|HTTP/i);
+    expect(create).not.toHaveBeenCalled(); expect(h.calls.some(call => call.url.pathname.includes('/media/'))).toBe(false);
+
+    click('Crear recepción');
+    await screen.findByRole('heading', { name: 'Detalle de recepción' });
+    const posts = h.calls.filter(call => call.init.method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.url.pathname).toBe('/api/v1/receptions');
+    expect(typeof posts[0]?.init.body === 'string' ? JSON.parse(posts[0].init.body) : null).toEqual({ vehicleId: IDS.vehicle, customerId: IDS.customer, privacyConsentId: IDS.consent, mileageKm: 101, fuelLevelPct: null, customerNotes: null, advisorNotes: null });
+    expect(create).not.toHaveBeenCalled();
     expect(h.calls.some(call => call.url.pathname.includes('/media/'))).toBe(false); expect(revoke).not.toHaveBeenCalled();
+  });
+  it('production detail keeps media consultation unavailable after the reception loads', async () => {
+    const create = vi.spyOn(tasks, 'createUploadTask'); const h = renderReception(`/recepciones/${IDS.reception}`, defaults, permissions);
+    const evidence = await screen.findByRole('region', { name: 'Evidencia de recepción' });
+    expect(within(evidence).getByText('La consulta de evidencia fotográfica y de video todavía no está disponible.')).toBeDefined();
+    expect(screen.queryByRole('button', { name: /Mostrar aviso|Subir/ })).toBeNull();
+    expect(screen.queryByLabelText('El propietario declara ser mayor de edad para la captura de evidencia.')).toBeNull();
+    expect(screen.queryByLabelText('Seleccionar fotos')).toBeNull(); expect(screen.queryByLabelText('Seleccionar video')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/contrato|reconciliación|Track A|DTO|HTTP/i);
+    expect(create).not.toHaveBeenCalled(); expect(h.calls.some(call => call.url.pathname.includes('/media/'))).toBe(false);
   });
   it('reused component clears confirmed/local/task state on effective permission loss without provider remount', async () => {
     const original = tasks.createUploadTask;
