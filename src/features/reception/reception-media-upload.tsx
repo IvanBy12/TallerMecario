@@ -10,7 +10,7 @@ export interface UploadCapacity { acquire(id: string): boolean; release(id: stri
  * No DTO or network adapter is defined here. F05 currently exercises this seam synthetically. */
 export function ReceptionMediaUpload({ id, file, label, executor, signal, disabled, capacity, onConfirmed }: {
   readonly id: string; readonly file: File; readonly label: string;
-  readonly executor?: UploadExecutor<undefined>; readonly signal: AbortSignal; readonly disabled: boolean;
+  readonly executor: UploadExecutor<undefined>; readonly signal: AbortSignal; readonly disabled: boolean;
   readonly capacity: UploadCapacity; readonly onConfirmed: (media: ConfirmedMedia, restoreFocus: boolean) => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
@@ -22,7 +22,7 @@ export function ReceptionMediaUpload({ id, file, label, executor, signal, disabl
   const confirm = useEffectEvent(onConfirmed);
   const release = useEffectEvent(() => { capacity.release(id); });
   useLayoutEffect(() => {
-    if (!executor || signal.aborted) return;
+    if (signal.aborted) return;
     const current = createUploadTask(executor);
     task.current = current;
     setState(current.getState());
@@ -62,11 +62,10 @@ export function ReceptionMediaUpload({ id, file, label, executor, signal, disabl
   return <div ref={root} tabIndex={-1} className="reception-media-upload" aria-label={`Estado de ${label}`}>
     <p role="status">{state.phase === 'idle' ? 'Solo local · Lista para subir.' : uploadTaskCopy(state)}</p>
     {active && <progress aria-label={`Progreso de ${label}`} {...(state.progress.determinate ? { value: state.progress.ratio, max: 1 } : {})}/>}
-    {!executor && <p>La carga y asociación están pendientes del contrato de integración.</p>}
-    {executor && (state.phase === 'idle' || restart) && <button ref={restartButton} className="ui-button" type="button" disabled={disabled || signal.aborted || capacity.full}
+    {(state.phase === 'idle' || restart) && <button ref={restartButton} className="ui-button" type="button" disabled={disabled || signal.aborted || capacity.full}
       onClick={start}>{state.phase === 'idle' ? 'Subir' : 'Reiniciar carga'} {label}</button>}
     {active && <button className="ui-button" type="button" disabled={signal.aborted} onClick={event => { focusCanceled.current = document.activeElement === event.currentTarget; cancelAttempt?.cancel(); }}>Cancelar carga de {label}</button>}
     {'recovery' in state && state.recovery.kind === 'user_action' && <p>Quita este archivo y selecciona otro antes de continuar.</p>}
-    {'recovery' in state && state.recovery.kind === 'contract_dependency' && <p>La recuperación requiere un contrato de revisión del estado remoto.</p>}
+    {'recovery' in state && state.recovery.kind === 'contract_dependency' && <p>No vuelvas a cargar este archivo hasta que se pueda verificar su estado.</p>}
   </div>;
 }
