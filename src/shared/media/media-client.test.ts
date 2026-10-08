@@ -5,6 +5,7 @@ import { createApiClient } from '@/shared/api/http-client';
 import { CONFIRMED_MEDIA, MEDIA_ID, SESSION_ID, UPLOAD_DTO, UPLOAD_SESSION } from '@/test/media-fixtures';
 import { createMediaClient } from './media-client';
 import type { MediaApiAdapter, StorageFetch } from './media-types';
+import type { UploadTransport } from './upload-task-types';
 import clientSource from './media-client.ts?raw';
 import contractSource from './media-contract.ts?raw';
 import errorSource from './media-errors.ts?raw';
@@ -12,14 +13,14 @@ import uploadSource from './media-upload.ts?raw';
 import typeSource from './media-types.ts?raw';
 
 const payload = new Blob(['abc']);
-function setup() {
+function setup(uploadTransport?: UploadTransport) {
   const client = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'private-token' }) });
   const api = {
     createUploadSession: vi.fn<MediaApiAdapter<undefined>['createUploadSession']>(() => Promise.resolve({ ok: true, data: UPLOAD_DTO })),
     completeUploadSession: vi.fn<MediaApiAdapter<undefined>['completeUploadSession']>(() => Promise.resolve({ ok: true, data: CONFIRMED_MEDIA })),
   };
   const storageFetch = vi.fn<StorageFetch>(() => Promise.resolve({ ok: true, status: 200, redirected: false, type: 'basic' }));
-  return { client, api, storageFetch, media: createMediaClient({ client, api, storageFetch }) };
+  return { client, api, storageFetch, media: createMediaClient({ client, api, storageFetch, uploadTransport }) };
 }
 
 describe('generic media lifecycle', () => {
@@ -116,5 +117,49 @@ describe('generic media lifecycle', () => {
   it('the generic implementation has no reception coupling, media enum values, MIME/size limits or endpoint paths', () => {
     const source = [clientSource, contractSource, errorSource, uploadSource, typeSource].join('\n');
     expect(source).not.toMatch(/signature|reception|image\/png|authorization_evidence|retentionClass|mediaType|\/api\/v1\//i);
+  });
+});
+
+
+describe('validated injected transport boundary', () => {
+  it.each([
+    { uploadUrl: 'http://insecure.test/object' },
+    { uploadUrl: 'https://user:password@storage.test/object' },
+    { uploadUrl: 'https://storage.test/object#fragment' },
+    { uploadHeaders: { Authorization: 'private' } },
+    { uploadHeaders: { 'X-Tenant-Id': MEDIA_ID } },
+    { uploadHeaders: { Cookie: 'private' } },
+    { uploadHeaders: { Host: 'storage.test' } },
+    { uploadHeaders: { 'Sec-Test': 'forbidden' } },
+    { uploadHeaders: { 'Content-Type': ' application/octet-stream' } },
+    { uploadHeaders: { 'Content-Type': 'application/octet-stream', 'content-type': 'application/octet-stream' } },
+    { uploadHeaders: { 'x-signed': 'unsafe\r\nheader' } },
+  ])('rejects unsafe target before injected transport dispatch %#', async override => {
+    const transport = vi.fn<UploadTransport>(() => Promise.resolve({ ok: true, data: null }));
+    const h = setup(transport);
+    h.api.createUploadSession.mockResolvedValue({ ok: true, data: { ...UPLOAD_DTO, ...override } });
+    expect(await h.media.upload(undefined, payload, new AbortController().signal)).toEqual({
+      ok: false, failure: { source: 'contract', kind: 'invalid_upload_session' },
+    });
+    expect(transport).not.toHaveBeenCalled(); expect(h.storageFetch).not.toHaveBeenCalled();
+    expect(h.api.completeUploadSession).not.toHaveBeenCalled();
+  });
+  it('passes only validated target data, original blob and signal to the injected transport', async () => {
+    const transport = vi.fn<UploadTransport>(() => Promise.resolve({ ok: true, data: null }));
+    const h = setup(transport), signal = new AbortController().signal;
+    expect(await h.media.upload(undefined, payload, signal)).toEqual({ ok: true, data: CONFIRMED_MEDIA });
+    expect(transport).toHaveBeenCalledTimes(1);
+    const call = transport.mock.calls[0];
+    if (!call) throw new Error('Expected transport dispatch');
+    const [target, received, sentSignal] = call;
+    expect(target).toEqual({ uploadUrl: UPLOAD_SESSION.uploadUrl, uploadHeaders: UPLOAD_SESSION.uploadHeaders });
+    expect(Object.keys(target).sort()).toEqual(['uploadHeaders', 'uploadUrl']);
+    expect(target.uploadHeaders).not.toBe(UPLOAD_DTO.uploadHeaders);
+    expect(Object.isFrozen(target)).toBe(true); expect(Object.isFrozen(target.uploadHeaders)).toBe(true);
+    expect(received).toBe(payload); expect(sentSignal).toBe(signal);
+    expect(h.storageFetch).not.toHaveBeenCalled();
+    expect(h.api.completeUploadSession).toHaveBeenCalledExactlyOnceWith(h.client, {
+      uploadSessionId: SESSION_ID, mediaAssetId: MEDIA_ID,
+    }, signal);
   });
 });

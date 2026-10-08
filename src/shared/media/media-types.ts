@@ -39,6 +39,7 @@ export type StorageFailureKind =
   | 'network'
   | 'session_expired'
   | 'signed_url_rejected'
+  | 'upload_conflict'
   | 'payload_too_large'
   | 'unsupported_media_type'
   | 'unprocessable_upload'
