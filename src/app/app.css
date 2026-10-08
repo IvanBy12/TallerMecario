@@ -1124,3 +1124,8 @@ a.dash-action:hover { background: var(--dash-soft); border-color: var(--dash-blu
 .video-picker :disabled { opacity: .6; cursor: default; }
 .video-preview { display: grid; gap: var(--tm-space-2); min-width: 0; }
 .video-preview video { display: block; width: 100%; max-width: 100%; max-height: 60vh; object-fit: contain; background: var(--tm-surface-muted); border-radius: var(--tm-radius-sm); }
+
+.reception-media { display: grid; gap: var(--tm-space-3); min-width: 0; }
+.reception-media p, .reception-media li { overflow-wrap: anywhere; }
+.reception-media-upload { display: grid; gap: var(--tm-space-2); min-width: 0; }
+.reception-media-upload progress { max-width: 100%; }

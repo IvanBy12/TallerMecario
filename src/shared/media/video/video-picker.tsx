@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { StatusBanner } from '@/shared/ui/status-banner';
 import { VideoPreview } from './video-preview';
 import { useVideoSelection } from './video-selection';
@@ -8,13 +8,15 @@ import { videoIssueCopy } from './video-validation';
 export interface VideoPickerProps {
   readonly policy?: VideoValidationPolicy;
   readonly disabled?: boolean;
+  /** Orchestration slot; this picker alone releases the File and preview. */
+  readonly renderVideo?: (video: VideoSelection, release: () => void) => ReactNode;
   /** Reports only accepted original Files, without URLs/pending candidates.
    * Consumers release retained Files on reset/unmount. A new key resets notice.
    */
   readonly onSelectionChange?: (video: VideoSelection | null) => void;
 }
 
-export function VideoPicker({ policy, disabled = false, onSelectionChange }: VideoPickerProps) {
+export function VideoPicker({ policy, disabled = false, onSelectionChange, renderVideo }: VideoPickerProps) {
   const id = useId();
   const gallery = useRef<HTMLInputElement>(null);
   const acknowledgement = useRef<HTMLInputElement>(null);
@@ -66,6 +68,7 @@ export function VideoPicker({ policy, disabled = false, onSelectionChange }: Vid
       <p>{selection.video ? 'Video seleccionado y listo para una futura carga.' : 'Sin video seleccionado.'}</p>
     </div>
     {selection.video && selection.previewUrl && <VideoPreview key={selection.video.id} video={selection.video} url={selection.previewUrl} />}
+    {selection.video && renderVideo?.(selection.video, selection.clear)}
     {canClear && <button type="button" className="ui-button" disabled={disabled}
       onClick={event => {
         if (event.currentTarget.ownerDocument.activeElement === event.currentTarget) pendingFocus.current = event.currentTarget;
