@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { StatusBanner } from '@/shared/ui/status-banner';
 import { PhotoPreviewList } from './photo-preview-list';
 import { usePhotoSelection } from './photo-selection';
@@ -8,6 +8,8 @@ import { photoIssueCopy } from './photo-validation';
 export interface PhotoPickerProps {
   readonly policy?: PhotoValidationPolicy;
   readonly disabled?: boolean;
+  /** Orchestration slot; selection and preview ownership stay in this picker. */
+  readonly renderPhoto?: (photo: PhotoSelection, position: number, release: () => void) => ReactNode;
   /** In-memory selections only, without preview URLs. Never persist/log them.
    * Parent consumers must release retained Files when clearing/unmounting.
    * Mount with a new key to reset both selection and notice acknowledgement.
@@ -15,7 +17,7 @@ export interface PhotoPickerProps {
   readonly onSelectionChange?: (photos: readonly PhotoSelection[]) => void;
 }
 
-export function PhotoPicker({ policy, disabled = false, onSelectionChange }: PhotoPickerProps) {
+export function PhotoPicker({ policy, disabled = false, onSelectionChange, renderPhoto }: PhotoPickerProps) {
   const id = useId();
   const gallery = useRef<HTMLInputElement>(null);
   const acknowledgement = useRef<HTMLInputElement>(null);
@@ -68,7 +70,7 @@ export function PhotoPicker({ policy, disabled = false, onSelectionChange }: Pho
       </ul>}
       <p>{selection.photos.length} {selection.photos.length === 1 ? 'foto seleccionada' : 'fotos seleccionadas'}</p>
     </div>
-    <PhotoPreviewList photos={selection.photos} onRemove={selection.remove} onEmptyFocus={focusSelection} disabled={disabled} />
+    <PhotoPreviewList photos={selection.photos} onRemove={selection.remove} onEmptyFocus={focusSelection} disabled={disabled} renderPhoto={renderPhoto === undefined ? undefined : (photo, position) => renderPhoto(photo, position, () => { selection.remove(photo.id); })} />
     <button type="button" className="ui-button" disabled={disabled || selection.photos.length === 0}
       onClick={event => {
         if (event.currentTarget.ownerDocument.activeElement === event.currentTarget) pendingClearFocus.current = event.currentTarget;

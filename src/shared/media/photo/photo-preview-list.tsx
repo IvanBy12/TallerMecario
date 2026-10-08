@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { PhotoSelection } from './photo-types';
 
 function PhotoPreview({ photo, position }: { readonly photo: PhotoSelection; readonly position: number }) {
@@ -19,11 +19,12 @@ function PhotoPreview({ photo, position }: { readonly photo: PhotoSelection; rea
     : <img src={url} alt={`Vista previa de la foto ${String(position)}`} onError={() => { setFailedUrl(url); }} />;
 }
 
-export function PhotoPreviewList({ photos, onRemove, onEmptyFocus, disabled = false }: {
+export function PhotoPreviewList({ photos, onRemove, onEmptyFocus, renderPhoto, disabled = false }: {
   readonly photos: readonly PhotoSelection[];
   readonly onRemove: (id: string) => void;
   readonly onEmptyFocus?: () => void;
   readonly disabled?: boolean;
+  readonly renderPhoto?: (photo: PhotoSelection, position: number) => ReactNode;
 }) {
   const removeButtons = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocus = useRef<{ readonly id: string; readonly index: number; readonly button: HTMLButtonElement } | null>(null);
@@ -42,6 +43,7 @@ export function PhotoPreviewList({ photos, onRemove, onEmptyFocus, disabled = fa
     {photos.map((photo, index) => <li key={photo.id}>
       <PhotoPreview photo={photo} position={index + 1} />
       <p>Foto {index + 1}</p>
+      {renderPhoto?.(photo, index + 1)}
       <button className="ui-button" type="button" disabled={disabled}
         ref={button => {
           if (button) removeButtons.current.set(photo.id, button);

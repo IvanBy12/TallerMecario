@@ -7,6 +7,7 @@ import { EMPTY_FORM, intakeBody, type IntakeForm } from './reception-create-form
 import { ReceptionFields } from './reception-fields';
 import { ReceptionPicker } from './reception-pickers';
 import { ReceptionConsentStep } from './reception-consent-step';
+import { ReceptionMedia } from './reception-media';
 import { RequestReference } from './request-reference';
 import { useReceptionAction } from './use-reception-action';
 export function NewReceptionPage() {
@@ -20,12 +21,18 @@ export function NewReceptionPage() {
     const [form, setForm] = useState<IntakeForm>(EMPTY_FORM);
     const [ownerProblem, setOwnerProblem] = useState(false);
     const [validatedOwner, setValidatedOwner] = useState(false);
+    const [localMedia, setLocalMedia] = useState(false);
+    const [discardMedia, setDiscardMedia] = useState(false);
     const [validation, setValidation] = useState(false);
     const [openConflict, setOpenConflict] = useState(false);
     const [existing, setExisting] = useState<readonly ReceptionSummary[]>([]);
     const [recoveryFailure, setRecoveryFailure] = useState<ApiFailure | null>(null);
     const allowed = can(permissions, 'receptions.create', true);
+    const mediaEligible = validatedOwner && consent !== null && can(permissions, 'media.upload', true);
+    const pendingMedia = mediaEligible && localMedia;
     const choose = (v: Vehicle) => {
+        setLocalMedia(false);
+        setDiscardMedia(false);
         setVehicle(v);
         setOwner(null);
         setConsent(null);
@@ -78,7 +85,7 @@ export function NewReceptionPage() {
     };
     const create = () => {
         const fields = intakeBody(form);
-        if (fields === null || vehicle === null || owner === null || consent === null || !validatedOwner || !allowed) {
+        if (fields === null || vehicle === null || owner === null || consent === null || !validatedOwner || !allowed || (pendingMedia && !discardMedia)) {
             setValidation(true);
             return;
         }
@@ -141,9 +148,11 @@ export function NewReceptionPage() {
       {consent !== null && <p role="status">Autorización vigente para la prestación del servicio.</p>}
       {notice !== null && owner !== null && <ReceptionConsentStep key={`${owner.customerId}:${notice.privacyNoticeVersion}:${notice.authorizationTextVersion}`} customerId={owner.customerId} notice={notice} onConsent={(c) => { setConsent(c); setNotice(null); }} onReload={reloadNotice}/>}
       {validatedOwner && consent === null && notice === null && !action.busy && <button type="button" disabled={action.blocked} onClick={reloadNotice}>Consultar aviso y recapturar autorización</button>}
+      {vehicle !== null && owner !== null && validatedOwner && consent !== null && can(permissions, 'media.upload', true) && <ReceptionMedia key={`${vehicle.vehicleId}:${owner.customerId}:${consent.privacyConsentId}`} consent={consent} disabled={action.blocked} onPendingChange={(pending) => { setLocalMedia(pending); setDiscardMedia(false); }}/>}
       <form onSubmit={(e) => { e.preventDefault(); create(); }}><ReceptionFields form={form} onChange={setForm} disabled={action.blocked}/>
         {validation && <p role="alert">Revisa los datos de ingreso y confirma vehículo, propietario y autorización.</p>}
-        <button type="submit" disabled={action.blocked || consent === null || !validatedOwner || openConflict}>Crear recepción</button>
+        {pendingMedia && <label><input type="checkbox" checked={discardMedia} disabled={action.blocked} onChange={(e) => { setDiscardMedia(e.target.checked); }}/>Crear la recepción sin estos archivos locales. Al continuar se liberarán de esta pantalla.</label>}
+        <button type="submit" disabled={(pendingMedia && !discardMedia) || action.blocked || consent === null || !validatedOwner || openConflict}>Crear recepción</button>
       </form>
       {action.busy && <p role="status">Procesando recepción…</p>}<RequestReference failure={action.failure}/><RequestReference failure={recoveryFailure}/>
       {openConflict && <><button type="button" disabled={action.blocked} onClick={findOpen}>Buscar recepción abierta</button>{existing.map((r) => <p key={r.receptionId}><Link to={`/recepciones/${r.receptionId}`}>Abrir recepción existente · {r.receivedAt}</Link></p>)}</>}
