@@ -1,6 +1,8 @@
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from 'react';
 import type { ApiClient } from '@/shared/api/http-client';
 import { createReceptionApi, type ReceptionApi } from './reception-api';
+import { createReceptionOperationalMediaApi, createReceptionOperationalMediaExecutor } from './reception-operational-media-api';
+import type { ReceptionMediaCapability } from './reception-media-capability';
 export { can, type EffectivePermissions } from '@/shared/auth/effective-permissions';
 import { normalizePermissions, type EffectivePermissions } from '@/shared/auth/effective-permissions';
 export interface ReceptionRuntime {
@@ -13,6 +15,7 @@ interface Value {
     readonly api: ReceptionApi;
     readonly permissions: EffectivePermissions;
     readonly signal: AbortSignal;
+    readonly mediaCapability: ReceptionMediaCapability;
 }
 const ReceptionContext = createContext<Value | null>(null);
 export function ReceptionProvider({ runtime, children }: {
@@ -29,10 +32,14 @@ function ReceptionSession({ runtime, permissions, children }: {
     // A semantic authorization change remounts this session; equivalent refreshes keep its snapshot.
     const [effectivePermissions] = useState(permissions);
     const [value, setValue] = useState<Value | null>(null);
-    const { apiClient, tenantId, identity } = runtime;
+    // Keep a verified runtime snapshot for this semantic session, including its client.
+    const [{ apiClient, tenantId, identity }] = useState(runtime);
     useLayoutEffect(() => {
         const controller = new AbortController();
-        setValue({ api: createReceptionApi(apiClient, tenantId, controller.signal), permissions: effectivePermissions, signal: controller.signal });
+        const signal = controller.signal;
+        const media = createReceptionOperationalMediaApi(apiClient, tenantId, signal);
+        setValue({ api: createReceptionApi(apiClient, tenantId, signal), permissions: effectivePermissions, signal,
+            mediaCapability: { kind: 'available', executor: createReceptionOperationalMediaExecutor({ client: apiClient, tenantId, signal }), attach: (receptionId, input, local) => media.attach(receptionId, input, local) } });
         return () => { controller.abort(); };
     }, [apiClient, tenantId, effectivePermissions, identity]);
     return value === null ? <p role="status">Preparando recepción…</p> : <ReceptionContext.Provider value={value}>{children}</ReceptionContext.Provider>;

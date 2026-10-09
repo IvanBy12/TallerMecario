@@ -529,3 +529,25 @@ describe('resource ownership across batched commits', () => {
     view.unmount(); expectedOwnership(2);
   });
 });
+
+describe('orchestration selection boundary', () => {
+  it('reports decoding start, ready and final cleanup without exporting candidates', async () => {
+    const processing = vi.fn();
+    const view = render(<VideoPicker onProcessingChange={processing}/>); acknowledge(); choose(video());
+    expect(processing).toHaveBeenLastCalledWith(true);
+    await duration(); expect(processing).toHaveBeenLastCalledWith(false);
+    choose(video()); expect(processing).toHaveBeenLastCalledWith(true);
+    view.unmount(); expect(processing).toHaveBeenLastCalledWith(false); expectedOwnership(2);
+  });
+  it('locks selection independently of the consumer action while retaining the original File', async () => {
+    const original = video(), action = vi.fn();
+    const slot = (selection: VideoSelection) => <button type="button" onClick={() => { action(selection.file); }}>Acción de carga</button>;
+    const view = render(<VideoPicker renderVideo={slot}/>); acknowledge(); choose(original); await duration();
+    view.rerender(<VideoPicker disabled renderVideo={slot}/>);
+    expect(input().disabled).toBe(true); fireEvent.click(screen.getByRole('button', { name: 'Quitar video' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Acción de carga' })); expect(action).toHaveBeenCalledWith(original);
+    expect(preview()).toBeDefined(); expect(revokeUrl).not.toHaveBeenCalled();
+    expect(screen.queryByText(/No se ha subido ni guardado/)).toBeNull();
+    expect(screen.getByText('Video seleccionado. Consulta su estado de carga.')).toBeDefined();
+  });
+});

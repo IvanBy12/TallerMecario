@@ -14,9 +14,11 @@ export interface VideoPickerProps {
    * Consumers release retained Files on reset/unmount. A new key resets notice.
    */
   readonly onSelectionChange?: (video: VideoSelection | null) => void;
+  /** Prevent consumers from leaving while an accepted candidate is being decoded. */
+  readonly onProcessingChange?: (processing: boolean) => void;
 }
 
-export function VideoPicker({ policy, disabled = false, onSelectionChange, renderVideo }: VideoPickerProps) {
+export function VideoPicker({ policy, disabled = false, onSelectionChange, onProcessingChange, renderVideo }: VideoPickerProps) {
   const id = useId();
   const gallery = useRef<HTMLInputElement>(null);
   const acknowledgement = useRef<HTMLInputElement>(null);
@@ -26,6 +28,9 @@ export function VideoPicker({ policy, disabled = false, onSelectionChange, rende
   const blocked = disabled || !noticeRead;
   const report = useEffectEvent((video: VideoSelection | null) => { onSelectionChange?.(video); });
   useEffect(() => { report(selection.video); }, [selection.video]);
+  const reportProcessing = useEffectEvent((processing: boolean) => { onProcessingChange?.(processing); });
+  useLayoutEffect(() => { reportProcessing(selection.status === 'metadata_loading'); }, [selection.status]);
+  useLayoutEffect(() => () => { reportProcessing(false); }, []);
   useLayoutEffect(() => {
     const button = pendingFocus.current;
     if (!button || selection.video) return;
@@ -61,11 +66,11 @@ export function VideoPicker({ policy, disabled = false, onSelectionChange, rende
       <input ref={gallery} id={`${id}-gallery`} type="file" accept="video/*" disabled={blocked}
         aria-describedby={`${id}-notice ${id}-instructions`} onChange={choose} />
     </div>
-    <p>El video permanece solo en esta pantalla. No se ha subido ni guardado.</p>
+    <p>{renderVideo ? 'Consulta el estado de carga del video. El archivo local se libera al salir.' : 'El video permanece solo en esta pantalla. No se ha subido ni guardado.'}</p>
     <div aria-live="polite" aria-atomic="true">
       {selection.status === 'metadata_loading' && <p>Obteniendo y validando la duración del video…</p>}
       {selection.issue && <p>{videoIssueCopy(selection.issue)}</p>}
-      <p>{selection.video ? 'Video seleccionado y listo para una futura carga.' : 'Sin video seleccionado.'}</p>
+      <p>{selection.video ? renderVideo ? 'Video seleccionado. Consulta su estado de carga.' : 'Video seleccionado y listo para una futura carga.' : 'Sin video seleccionado.'}</p>
     </div>
     {selection.video && selection.previewUrl && <VideoPreview key={selection.video.id} video={selection.video} url={selection.previewUrl} />}
     {selection.video && renderVideo?.(selection.video, selection.clear)}
