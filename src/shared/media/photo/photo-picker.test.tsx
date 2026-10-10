@@ -271,3 +271,16 @@ describe('PhotoPicker focus after explicit removal', () => {
     expect(document.activeElement).toBe(next);
   });
 });
+
+describe('orchestration selection boundary', () => {
+  it('locks selection independently of the consumer action and preserves the original File', () => {
+    const original = photo(), action = vi.fn();
+    const slot = (selection: PhotoSelection) => <button type="button" onClick={() => { action(selection.file); }}>Acción de carga</button>;
+    const view = render(<PhotoPicker renderPhoto={slot}/>); acknowledge(); choose([original]);
+    view.rerender(<PhotoPicker disabled renderPhoto={slot}/>);
+    expect(input().disabled).toBe(true); fireEvent.click(screen.getByRole('button', { name: 'Quitar foto 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Acción de carga' })); expect(action).toHaveBeenCalledWith(original);
+    expect(screen.getByRole('img')).toBeDefined(); expect(revokeUrl).not.toHaveBeenCalled();
+    expect(screen.queryByText(/No se han subido ni guardado/)).toBeNull();
+  });
+});

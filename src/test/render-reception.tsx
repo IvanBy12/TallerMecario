@@ -1,6 +1,7 @@
-import { StrictMode } from 'react';
+import { StrictMode, createContext, useContext } from 'react';
 import { render } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { VoluntaryExitProvider } from '@/shared/navigation/voluntary-exit';
 import { AppRoutes } from '@/app/app-routes';
 import type { EffectivePermissions, ReceptionRuntime } from '@/features/reception/reception-context';
 import { createApiClient, type FetchResponse } from '@/shared/api/http-client';
@@ -24,13 +25,20 @@ export function jsonResponse(body: unknown, status = 200, retryAfter: string | n
 }
 export function errorResponse(code: string, status = 409, retryAfter: string | null = null) { return jsonResponse({ error: { code, message: 'PRIVATE BACKEND COPY MUST NEVER APPEAR', request_id: 'request-test' } }, status, retryAfter); }
 export const PERMISSIONS: EffectivePermissions = ['receptions.read', 'receptions.create', 'receptions.update_open', 'customers.read', 'vehicles.read', 'privacy_consents.read', 'privacy_consents.capture'].map((code) => ({ code, scopes: ['tenant'] }));
-export function renderReception(path: string, respond: (call: Call) => FetchResponse | Promise<FetchResponse>, permissions: EffectivePermissions = PERMISSIONS, strict = false) {
+const RuntimeContext = createContext<ReceptionRuntime | null>(null);
+export function renderReception(path: string, respond: (call: Call) => FetchResponse | Promise<FetchResponse>, permissions: EffectivePermissions = PERMISSIONS, strict = false, exits: { readonly onSignOut?: () => void; readonly onChangeWorkshop?: () => void } = {}) {
     const calls: Call[] = [];
     const tokenCalls: unknown[] = [];
     const apiClient = createApiClient({ apiOrigin: 'https://api.example.test', getToken: (options) => { tokenCalls.push(options); return Promise.resolve({ kind: 'token', token: 'test-token' }); }, fetchImpl: (url, init) => { const call = { url: new URL(url), init }; calls.push(call); return Promise.resolve(respond(call)); } });
     const runtime: ReceptionRuntime = { apiClient, tenantId: IDS.tenant, identity: 'synthetic-user:synthetic-session', permissions };
-    const view = (next: ReceptionRuntime) => <MemoryRouter initialEntries={[path]}><AppRoutes shellStatus="context_ready" onSignOut={() => undefined} grantedPermissions={new Set(next.permissions.map((p) => p.code))} receptionRuntime={next}/></MemoryRouter>;
-    const wrapped = (next: ReceptionRuntime) => strict ? <StrictMode>{view(next)}</StrictMode> : view(next);
+    function View() {
+      const next = useContext(RuntimeContext);
+      if (next === null) return <p>Sesión invalidada externamente</p>;
+      return <VoluntaryExitProvider><AppRoutes shellStatus="context_ready" onSignOut={exits.onSignOut ?? (() => undefined)} onChangeWorkshop={exits.onChangeWorkshop} grantedPermissions={new Set(next.permissions.map(p => p.code))} receptionRuntime={next}/></VoluntaryExitProvider>;
+    }
+    const router = createMemoryRouter([{ path: '*', element: <View/> }], { initialEntries: ['/panel', path, '/vehiculos'], initialIndex: 1 });
+    const view = (next: ReceptionRuntime | null) => <RuntimeContext.Provider value={next}><RouterProvider router={router}/></RuntimeContext.Provider>;
+    const wrapped = (next: ReceptionRuntime | null) => strict ? <StrictMode>{view(next)}</StrictMode> : view(next);
     const rendered = render(wrapped(runtime));
-    return { ...rendered, calls, tokenCalls, apiClient, runtime, updateRuntime: (next: ReceptionRuntime) => { rendered.rerender(wrapped(next)); } };
+    return { ...rendered, calls, tokenCalls, apiClient, runtime, router, updateRuntime: (next: ReceptionRuntime | null) => { rendered.rerender(wrapped(next)); } };
 }

@@ -1,3 +1,4 @@
+import { MemoryRouter } from '@/test/data-memory-router';
 import { AuthContextProvider } from '@/features/auth/auth-provider';
 import type { WorkshopContext } from '@/features/auth/me-contract';
 import type { WorkshopContextSource } from '@/features/auth/workshop-context';
@@ -6,7 +7,7 @@ import { createFakeSessionPort, signedInSnapshot } from '@/test/render-with-auth
 import { AuthenticatedRoot } from './authenticated-root';
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {

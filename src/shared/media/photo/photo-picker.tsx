@@ -63,7 +63,7 @@ export function PhotoPicker({ policy, disabled = false, onSelectionChange, rende
       <input ref={gallery} id={`${id}-gallery`} type="file" accept="image/*" multiple disabled={blocked}
         aria-describedby={`${id}-notice ${id}-instructions`} onChange={choose} />
     </div>
-    <p>Las fotos permanecen solo en esta pantalla. No se han subido ni guardado.</p>
+    <p>{renderPhoto ? 'Consulta el estado de carga de cada foto. Los archivos locales se liberan al salir.' : 'Las fotos permanecen solo en esta pantalla. No se han subido ni guardado.'}</p>
     <div aria-live="polite" aria-atomic="true">
       {selection.issues.length > 0 && <ul aria-label="Problemas de selección">
         {selection.issues.map(issue => <li key={issue.position}>Archivo {issue.position}: {photoIssueCopy(issue.code)}</li>)}

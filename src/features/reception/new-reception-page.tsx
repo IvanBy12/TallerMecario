@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
+import { useVoluntaryExitGuard } from '@/shared/navigation/voluntary-exit';
 import type { ApiFailure } from '@/shared/api/api-failure';
 import { can, useReception } from './reception-context';
 import { currentOwner, type Owner, type PrivacyConsent, type PrivacyNotice, type ReceptionSummary, type Vehicle } from './reception-contract';
@@ -10,8 +12,9 @@ import { ReceptionConsentStep } from './reception-consent-step';
 import { ReceptionMedia, type ReceptionMediaCapability } from './reception-media';
 import { RequestReference } from './request-reference';
 import { useReceptionAction } from './use-reception-action';
-export function NewReceptionPage({ mediaCapability = { kind: 'unavailable' } }: { readonly mediaCapability?: ReceptionMediaCapability }) {
-    const { api, permissions, signal } = useReception();
+export function NewReceptionPage({ mediaCapability: injectedCapability }: { readonly mediaCapability?: ReceptionMediaCapability }) {
+    const { api, permissions, signal, mediaCapability: productionCapability } = useReception();
+    const mediaCapability = injectedCapability ?? productionCapability;
     const action = useReceptionAction();
     const navigate = useNavigate();
     const [vehicle, setVehicle] = useState<Vehicle | null>(null);
@@ -22,6 +25,10 @@ export function NewReceptionPage({ mediaCapability = { kind: 'unavailable' } }: 
     const [ownerProblem, setOwnerProblem] = useState(false);
     const [validatedOwner, setValidatedOwner] = useState(false);
     const [localMedia, setLocalMedia] = useState(false);
+    const [mediaProcessing, setMediaProcessing] = useState(false);
+    const [receptionId, setReceptionId] = useState<string | null>(null);
+    const [allMediaAssociated, setAllMediaAssociated] = useState(false);
+    const created = useRef<string | null>(null);
     const [discardMedia, setDiscardMedia] = useState(false);
     const [validation, setValidation] = useState(false);
     const [openConflict, setOpenConflict] = useState(false);
@@ -30,6 +37,14 @@ export function NewReceptionPage({ mediaCapability = { kind: 'unavailable' } }: 
     const allowed = can(permissions, 'receptions.create', true);
     const mediaEligible = mediaCapability.kind === 'available' && validatedOwner && consent !== null && can(permissions, 'media.upload', true);
     const pendingMedia = mediaEligible && localMedia;
+    const creationLocked = action.blocked || receptionId !== null;
+    const [mediaReleased, setMediaReleased] = useState(false);
+    const releaseMedia = useCallback(() => { setMediaReleased(true); }, []);
+    useVoluntaryExitGuard(!mediaReleased && (pendingMedia || mediaProcessing), {
+        signal, release: releaseMedia,
+        message: 'Hay evidencia del vehículo pendiente de guardar. Si sales, los archivos locales se perderán y las cargas en curso se cancelarán. ' +
+            (receptionId === null ? 'La recepción todavía no se ha creado. ¿Deseas salir?' : 'La recepción ya creada permanecerá guardada. ¿Deseas salir?'),
+    });
     const clearLocalMedia = () => { setLocalMedia(false); setDiscardMedia(false); };
     const choose = (v: Vehicle) => {
         clearLocalMedia();
@@ -90,14 +105,20 @@ export function NewReceptionPage({ mediaCapability = { kind: 'unavailable' } }: 
         void action.run(() => api.list({ vehicleId: vehicle.vehicleId, status: 'open' }), (data) => { setExisting(data.receptions); setOpenConflict(data.receptions.length > 0); setRecoveryFailure(null); });
     };
     const create = () => {
+        if (created.current !== null || mediaProcessing || signal.aborted) return;
         const fields = intakeBody(form);
-        if (fields === null || vehicle === null || owner === null || consent === null || !validatedOwner || !allowed || (pendingMedia && !discardMedia)) {
+        if (fields === null || vehicle === null || owner === null || consent === null || !validatedOwner || !allowed) {
             setValidation(true);
             return;
         }
         setValidation(false);
         setRecoveryFailure(null);
-        void action.run(() => api.create({ ...fields, vehicleId: vehicle.vehicleId, customerId: owner.customerId, privacyConsentId: consent.privacyConsentId }), (r) => { void navigate(`/recepciones/${r.receptionId}`); }, async (error) => {
+        void action.run(() => api.create({ ...fields, vehicleId: vehicle.vehicleId, customerId: owner.customerId, privacyConsentId: consent.privacyConsentId }), (r) => {
+            if (signal.aborted) return;
+            created.current = r.receptionId;
+            setReceptionId(r.receptionId);
+            if (!pendingMedia || discardMedia) { if (discardMedia) flushSync(releaseMedia); void navigate(`/recepciones/${r.receptionId}`); }
+        }, async (error) => {
             if (error.code === 'PRIVACY_CONSENT_NOT_ELIGIBLE' || error.code === 'PRIVACY_CONSENT_NOT_FOUND') {
                 clearLocalMedia();
                 setConsent(null);
@@ -149,22 +170,32 @@ export function NewReceptionPage({ mediaCapability = { kind: 'unavailable' } }: 
     };
     return <section className="reception-page"><h1>Nueva recepción</h1><Link to="/recepciones">Volver a recepciones</Link>
     {!allowed ? <p role="alert">No tienes permiso para crear recepciones.</p> : <>
-      <ReceptionPicker kind="vehicle" disabled={action.blocked} onVehicle={choose}/>
-      {vehicle !== null && <><h2>Vehículo: {vehicle.plate}</h2><p>{vehicle.brand} {vehicle.model} · Kilometraje registrado: {vehicle.currentMileageKm ?? 'Sin registrar'}</p><button type="button" disabled={action.blocked} onClick={prepare}>Consultar propietario vigente</button></>}
+      <ReceptionPicker kind="vehicle" disabled={creationLocked} onVehicle={choose}/>
+      {vehicle !== null && <><h2>Vehículo: {vehicle.plate}</h2><p>{vehicle.brand} {vehicle.model} · Kilometraje registrado: {vehicle.currentMileageKm ?? 'Sin registrar'}</p><button type="button" disabled={creationLocked} onClick={prepare}>Consultar propietario vigente</button></>}
       {ownerProblem && <p role="alert">No hay un único propietario principal vigente. Corrige la propiedad en CRM antes de continuar.</p>}
-      {owner !== null && <><h2>Propietario: {owner.customer.firstName} {owner.customer.lastName}</h2><p>El propietario principal vigente debe entregar el vehículo.</p>{!validatedOwner && <button type="button" disabled={action.blocked} onClick={confirmOwner}>Confirmar propietario y consultar autorización</button>}</>}
+      {owner !== null && <><h2>Propietario: {owner.customer.firstName} {owner.customer.lastName}</h2><p>El propietario principal vigente debe entregar el vehículo.</p>{!validatedOwner && <button type="button" disabled={creationLocked} onClick={confirmOwner}>Confirmar propietario y consultar autorización</button>}</>}
       {consent !== null && <p role="status">Autorización vigente para la prestación del servicio.</p>}
       {notice !== null && owner !== null && <ReceptionConsentStep key={`${owner.customerId}:${notice.privacyNoticeVersion}:${notice.authorizationTextVersion}`} customerId={owner.customerId} notice={notice} onConsent={(c) => { setConsent(c); setNotice(null); }} onReload={reloadNotice}/>}
-      {validatedOwner && consent === null && notice === null && !action.busy && <button type="button" disabled={action.blocked} onClick={reloadNotice}>Consultar aviso y recapturar autorización</button>}
-      {vehicle !== null && owner !== null && validatedOwner && consent !== null && can(permissions, 'media.upload', true) && <ReceptionMedia key={`${vehicle.vehicleId}:${owner.customerId}:${consent.privacyConsentId}`} consent={consent} capability={mediaCapability} disabled={action.blocked} onPendingChange={(pending) => { setLocalMedia(pending); setDiscardMedia(false); }}/>}
-      <form onSubmit={(e) => { e.preventDefault(); create(); }}><ReceptionFields form={form} onChange={setForm} disabled={action.blocked}/>
+      {validatedOwner && consent === null && notice === null && !action.busy && <button type="button" disabled={creationLocked} onClick={reloadNotice}>Consultar aviso y recapturar autorización</button>}
+      {!mediaReleased && vehicle !== null && owner !== null && validatedOwner && consent !== null && can(permissions, 'media.upload', true) && <ReceptionMedia key={`${vehicle.vehicleId}:${owner.customerId}:${consent.privacyConsentId}`} consent={consent} capability={mediaCapability} disabled={action.blocked} receptionId={receptionId} onProcessingChange={setMediaProcessing} onAllAssociated={() => { setAllMediaAssociated(true); }} onPendingChange={(pending) => { setLocalMedia(pending); setDiscardMedia(false); }}/>}
+      {receptionId !== null && <section aria-label="Recepción creada">
+        <p role="status">Recepción creada. Ahora puedes completar la carga de la evidencia.</p>
+        {!allMediaAssociated ? <>
+          <p>La recepción ya existe. Hay evidencia sin asociación confirmada. Al continuar se liberarán los archivos locales que aún permanecen en esta pantalla.</p>
+          <button type="button" onClick={() => { void navigate(`/recepciones/${receptionId}`); }}>Continuar a la recepción sin completar esta evidencia</button>
+        </> : <>
+          <p>Toda la evidencia seleccionada está guardada en la recepción.</p>
+          <button type="button" onClick={() => { void navigate(`/recepciones/${receptionId}`); }}>Continuar a la recepción</button>
+        </>}
+      </section>}
+      <form onSubmit={(e) => { e.preventDefault(); create(); }}><ReceptionFields form={form} onChange={setForm} disabled={creationLocked}/>
         {validation && <p role="alert">Revisa los datos de ingreso y confirma vehículo, propietario y autorización.</p>}
-        {pendingMedia && <label><input type="checkbox" checked={discardMedia} disabled={action.blocked} onChange={(e) => { setDiscardMedia(e.target.checked); }}/>Crear la recepción sin estos archivos locales. Al continuar se liberarán de esta pantalla.</label>}
-        <button type="submit" disabled={(pendingMedia && !discardMedia) || action.blocked || consent === null || !validatedOwner || openConflict}>Crear recepción</button>
+        {receptionId === null && pendingMedia && <label><input type="checkbox" checked={discardMedia} disabled={creationLocked} onChange={(e) => { setDiscardMedia(e.target.checked); }}/>Crear la recepción sin estos archivos locales. Al continuar se liberarán de esta pantalla.</label>}
+        <button type="submit" disabled={creationLocked || mediaProcessing || consent === null || !validatedOwner || openConflict}>Crear recepción</button>
       </form>
       {action.busy && <p role="status">Procesando recepción…</p>}<RequestReference failure={action.failure}/><RequestReference failure={recoveryFailure}/>
-      {openConflict && <><button type="button" disabled={action.blocked} onClick={findOpen}>Buscar recepción abierta</button>{existing.map((r) => <p key={r.receptionId}><Link to={`/recepciones/${r.receptionId}`}>Abrir recepción existente · {r.receivedAt}</Link></p>)}</>}
-      {action.failure !== null && vehicle !== null && owner === null && <button type="button" disabled={action.blocked} onClick={prepare}>Reintentar consulta de propietario</button>}
+      {openConflict && <><button type="button" disabled={creationLocked} onClick={findOpen}>Buscar recepción abierta</button>{existing.map((r) => <p key={r.receptionId}><Link to={`/recepciones/${r.receptionId}`}>Abrir recepción existente · {r.receivedAt}</Link></p>)}</>}
+      {action.failure !== null && vehicle !== null && owner === null && <button type="button" disabled={creationLocked} onClick={prepare}>Reintentar consulta de propietario</button>}
     </>}
   </section>;
 }

@@ -1,3 +1,5 @@
+import { BrowserRouter, useBlocker } from 'react-router-dom';
+import { StrictMode } from 'react';
 import { render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -72,4 +74,20 @@ describe('App', () => {
     expect(screen.getByText('VITE_CLERK_PUBLISHABLE_KEY')).toBeDefined();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+  it('Strict Mode and unmount dispose data-router history and exit listeners', () => {
+    const add = vi.spyOn(window, 'addEventListener'), remove = vi.spyOn(window, 'removeEventListener');
+    const h = render(<StrictMode><App envResult={{ ok: false, issues: [] }}/></StrictMode>);
+    h.unmount();
+    for (const event of ['popstate', 'beforeunload']) {
+      const registrations = add.mock.calls.filter(call => call[0] === event);
+      expect(registrations.length).toBeGreaterThan(0);
+      for (const [, listener] of registrations) expect(remove.mock.calls.some(call => call[0] === event && call[1] === listener)).toBe(true);
+    }
+  });
+
+  it('installed useBlocker rejects a declarative BrowserRouter at runtime', () => {
+    function Probe() { useBlocker(false); return null; }
+    expect(() => render(<BrowserRouter><Probe/></BrowserRouter>)).toThrow('useBlocker must be used within a data router');
+  });
+
 });
