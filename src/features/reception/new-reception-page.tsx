@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
+import { useVoluntaryExitGuard } from '@/shared/navigation/voluntary-exit';
 import type { ApiFailure } from '@/shared/api/api-failure';
 import { can, useReception } from './reception-context';
 import { currentOwner, type Owner, type PrivacyConsent, type PrivacyNotice, type ReceptionSummary, type Vehicle } from './reception-contract';
@@ -36,21 +38,13 @@ export function NewReceptionPage({ mediaCapability: injectedCapability }: { read
     const mediaEligible = mediaCapability.kind === 'available' && validatedOwner && consent !== null && can(permissions, 'media.upload', true);
     const pendingMedia = mediaEligible && localMedia;
     const creationLocked = action.blocked || receptionId !== null;
-    useEffect(() => {
-        if (!pendingMedia && !mediaProcessing) return;
-        const message = receptionId === null ? 'Al salir se liberarán los archivos locales seleccionados.' :
-            'La recepción ya existe. Hay evidencia sin asociación confirmada. Al salir se liberarán los archivos locales. ¿Continuar sin completar la evidencia?';
-        const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
-        const beforeLink = (event: MouseEvent) => {
-            const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
-            if (!link || event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey ||
-                link.getAttribute('href')?.startsWith('#') || link.getAttribute('target') === '_blank' || link.hasAttribute('download')) return;
-            if (!window.confirm(message)) { event.preventDefault(); event.stopPropagation(); }
-        };
-        window.addEventListener('beforeunload', beforeUnload);
-        document.addEventListener('click', beforeLink, true);
-        return () => { window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('click', beforeLink, true); };
-    }, [pendingMedia, mediaProcessing, receptionId]);
+    const [mediaReleased, setMediaReleased] = useState(false);
+    const releaseMedia = useCallback(() => { setMediaReleased(true); }, []);
+    useVoluntaryExitGuard(!mediaReleased && (pendingMedia || mediaProcessing), {
+        signal, release: releaseMedia,
+        message: 'Hay evidencia del vehículo pendiente de guardar. Si sales, los archivos locales se perderán y las cargas en curso se cancelarán. ' +
+            (receptionId === null ? 'La recepción todavía no se ha creado. ¿Deseas salir?' : 'La recepción ya creada permanecerá guardada. ¿Deseas salir?'),
+    });
     const clearLocalMedia = () => { setLocalMedia(false); setDiscardMedia(false); };
     const choose = (v: Vehicle) => {
         clearLocalMedia();
@@ -123,7 +117,7 @@ export function NewReceptionPage({ mediaCapability: injectedCapability }: { read
             if (signal.aborted) return;
             created.current = r.receptionId;
             setReceptionId(r.receptionId);
-            if (!pendingMedia || discardMedia) void navigate(`/recepciones/${r.receptionId}`);
+            if (!pendingMedia || discardMedia) { if (discardMedia) flushSync(releaseMedia); void navigate(`/recepciones/${r.receptionId}`); }
         }, async (error) => {
             if (error.code === 'PRIVACY_CONSENT_NOT_ELIGIBLE' || error.code === 'PRIVACY_CONSENT_NOT_FOUND') {
                 clearLocalMedia();
@@ -183,7 +177,7 @@ export function NewReceptionPage({ mediaCapability: injectedCapability }: { read
       {consent !== null && <p role="status">Autorización vigente para la prestación del servicio.</p>}
       {notice !== null && owner !== null && <ReceptionConsentStep key={`${owner.customerId}:${notice.privacyNoticeVersion}:${notice.authorizationTextVersion}`} customerId={owner.customerId} notice={notice} onConsent={(c) => { setConsent(c); setNotice(null); }} onReload={reloadNotice}/>}
       {validatedOwner && consent === null && notice === null && !action.busy && <button type="button" disabled={creationLocked} onClick={reloadNotice}>Consultar aviso y recapturar autorización</button>}
-      {vehicle !== null && owner !== null && validatedOwner && consent !== null && can(permissions, 'media.upload', true) && <ReceptionMedia key={`${vehicle.vehicleId}:${owner.customerId}:${consent.privacyConsentId}`} consent={consent} capability={mediaCapability} disabled={action.blocked} receptionId={receptionId} onProcessingChange={setMediaProcessing} onAllAssociated={() => { setAllMediaAssociated(true); }} onPendingChange={(pending) => { setLocalMedia(pending); setDiscardMedia(false); }}/>}
+      {!mediaReleased && vehicle !== null && owner !== null && validatedOwner && consent !== null && can(permissions, 'media.upload', true) && <ReceptionMedia key={`${vehicle.vehicleId}:${owner.customerId}:${consent.privacyConsentId}`} consent={consent} capability={mediaCapability} disabled={action.blocked} receptionId={receptionId} onProcessingChange={setMediaProcessing} onAllAssociated={() => { setAllMediaAssociated(true); }} onPendingChange={(pending) => { setLocalMedia(pending); setDiscardMedia(false); }}/>}
       {receptionId !== null && <section aria-label="Recepción creada">
         <p role="status">Recepción creada. Ahora puedes completar la carga de la evidencia.</p>
         {!allMediaAssociated ? <>

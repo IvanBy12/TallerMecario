@@ -1,6 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 
+import { useVoluntaryExit } from '@/shared/navigation/voluntary-exit';
+
 import { StatusBanner } from '@/shared/ui/status-banner';
 
 import {
@@ -29,6 +31,7 @@ export interface AppShellProps {
  * y área de contenido. Sólo se monta desde `AuthenticatedRoot`, con un estado ya validado.
  */
 export function AppShell({ status, onSignOut, grantedPermissions = null, workshopName, onChangeWorkshop }: AppShellProps) {
+  const runExit = useVoluntaryExit();
   const [isNavigationOpen, setIsNavigationOpen] = useState(false);
   const navigationId = useId();
   const shellRef = useRef<HTMLDivElement>(null);
@@ -111,8 +114,8 @@ export function AppShell({ status, onSignOut, grantedPermissions = null, worksho
         </Link>
 
         <div className="shell__header-actions">
-          {onChangeWorkshop === undefined ? null : <button type="button" className="ui-button ui-button--ghost" onClick={onChangeWorkshop}>Cambiar taller</button>}
-          <button type="button" className="ui-button ui-button--ghost" onClick={onSignOut}>
+          {onChangeWorkshop === undefined ? null : <button type="button" className="ui-button ui-button--ghost" onClick={() => { runExit(onChangeWorkshop); }}>Cambiar taller</button>}
+          <button type="button" className="ui-button ui-button--ghost" onClick={() => { runExit(onSignOut); }}>
             Cerrar sesión
           </button>
         </div>

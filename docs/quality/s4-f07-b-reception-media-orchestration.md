@@ -157,3 +157,179 @@ lifecycle/RBAC and duration-policy gates still need their independent evidence.
 Local tests/build/harness do not certify deployment, browser CORS or Sprint 4 PASS.
 
 S4-F07-B: READY_FOR_REVIEW
+
+
+## Follow-up verification — 2026-10-10 (America/Bogota)
+
+Correction request: base `c61e9eeec281bec667c2b246d022c2795b493275`, initial
+and final HEAD `d3ecbf25ffecd7f46a9aeb35d31ae5b890b8096f`. The specified
+worktree exists on `task/s4-f07-b-media-orchestration` and was initially clean.
+
+The exact MEDIUM/LOW findings and Verdict could not be recovered from the
+implementation chat, its local session records, repository evidence or Git notes.
+The two subsequent user excerpts contain reviewed base/head and the implementation
+handoff, respectively, without finding descriptions. Neither severity is treated
+as a known or closed finding. The changed page/context/media/upload/capability,
+pickers and tests were inspected independently against the approved task and F07-A.
+No new reproducible defect was established by the executed checks; this does not
+prove the absent findings are invalid. No production correction, regression test
+or correction commit was created; only this verification note was added.
+
+Node v22.23.3. The worktree initially lacked dependencies (`vitest: command not
+found`); `npm ci --no-audit --no-fund` installed the existing lockfile without
+tracked dependency changes. Actual gates: typecheck PASS; lint PASS (zero warnings);
+reception PASS 420/420 (10 files); shared media PASS 332/332 (10 files); full tests
+PASS 1183/1183 (47 files); local synthetic harness PASS 191/191 (11 files), without
+an environmental failure on this run; build PASS (existing >500 kB chunk warning);
+`git diff --check` PASS. No omitted/skipped tests were reported by these gates.
+
+Remaining blocker: obtain the complete Findings/Verdict and reproduce each
+original finding before claiming closure or readiness for independent re-review.
+Real browser/R2/CORS and remote E2E remain F07-C work; no Sprint 4 PASS is declared.
+Final worktree has only this uncommitted documentation change. No push or PR.
+
+S4-F07-B FIXES: BLOCKED
+
+
+## FIX-01 — confirmed Recovery Review finding (2026-10-10, America/Bogota)
+
+Scope: the confirmed MEDIUM navigation/session-action finding only. Base
+`c61e9eeec281bec667c2b246d022c2795b493275`; initial implementation HEAD
+`d3ecbf25ffecd7f46a9aeb35d31ae5b890b8096f`; same existing worktree and branch
+`task/s4-f07-b-media-orchestration`. The pre-existing uncommitted follow-up
+verification note above is preserved verbatim and included in the correction
+commit. The unavailable MEDIUM/LOW findings from the older review are still
+unrecovered; no claim is made that FIX-01 closes them.
+
+### Reproduction and root cause
+
+The original page intercepted document link clicks and beforeunload only. Browser
+POP and programmatic router transitions never passed through that click handler;
+AppShell invoked onChangeWorkshop/onSignOut directly. After creating a reception
+with an unresolved photo, Back unmounted the page without asking and released
+the original File/preview. The same lifecycle could discard an in-flight PUT or
+attach. Explicit detail continuation also bypassed the link handler.
+
+Before changing production code, three regression cases used a real
+createMemoryRouter and the production page/shell: Back with a local photo after
+creation, change workshop, and sign out. All three FAILED waiting for the missing
+exit dialog (3 failed; the filter intentionally did not execute 27 existing
+cases). After the correction those cases pass within the expanded regression
+matrix. This baseline is a router transition, not a simulated link interception;
+Chromium history verification below additionally exercises actual browser POP.
+
+### Router and shell integration
+
+React Router **7.18.4**, React 19.3.0, Node v22.23.3, existing lockfile. The installed
+useBlocker implementation requires a data-router context. An added compatibility
+test actually renders it inside BrowserRouter and asserts the runtime error;
+TypeScript importability is not treated as compatibility evidence. Official
+references: [mode availability](https://reactrouter.com/7.18.4/start/modes) and
+[useBlocker](https://reactrouter.com/7.18.4/api/hooks/useBlocker).
+
+App now creates/disposes one browser data-router root with a single `*` route.
+Its existing public/auth route table and AppRoutes descendants remain declarative,
+with no loaders, route-table migration, new dependencies or history monkey-patch.
+The router is initialized in a lifecycle effect and disposed on cleanup, including
+Strict Mode's probe. AppRoutes and AuthenticatedRoot retain their business ownership.
+
+VoluntaryExitProvider owns one supported useBlocker and one registration shared
+by router exits and AppShell's voluntary actions. NewReceptionPage registers only
+its message, session signal and a release callback; the shell owns no Files,
+recepciones or upload state. A native modal dialog provides one confirmation,
+Escape cancellation and focus restoration. Reject resets the blocker without
+canceling work or executing the callback. Accept synchronously unmounts the
+existing media boundary before proceeding/calling the requested action once;
+its existing cleanup aborts PUT/attach and releases local previews. There is no
+reception/media mutation in the guard. Explicit pre-create discard already
+accepts local release and does not prompt again.
+
+Protection follows unresolved local selection or video processing, not upload
+activeCount. Selected Files remain present through preparing, uploading,
+completing, active/unassociated, associating, failed/ambiguous results, until
+canonical association releases them. Associated-only and empty states navigate
+freely. The pre-/post-create messages accurately describe whether reception
+creation succeeded. Same-page anchors and new-tab/download behavior remain normal;
+full-document exits retain the browser's beforeunload warning.
+
+External session invalidation, identity/tenant changes and semantic permission
+revocation still remount/abort through the original auth/reception boundary.
+Guard cleanup cancels a stale dialog/blocked intent immediately and never invokes
+the voluntary callback. Equivalent context refresh preserves Files and operations.
+All existing mapping, idempotency, order, concurrency and association tests remain
+passing; there is no offline persistence or backend change.
+
+### Regression evidence and final gates
+
+86 new orchestration cases exercise actual memory-router Back/Forward, push/replace,
+all eight pending stages, shell accept/reject in local/PUT/attach, forced changes
+with an open dialog, equivalent refresh, no pending/all associated, Strict Mode,
+Escape, beforeunload, late results and exact mutation counts. Two App cases prove
+the installed router incompatibility and disposal of history/unload listeners.
+
+22 new Chromium cases run production AppRoutes, AppShell, NewReceptionPage,
+ReceptionProvider and the same single-root data-router/coordinator integration.
+The isolated Vite fixture uses synthetic in-memory HTTP/storage responses only;
+it never contacts Clerk/backend/R2. Browser goBack/goForward exercise real
+indexed history, including repeated rejection followed by another attempt;
+programmatic exits, PUT/attach cancellation, original preview preservation,
+shell actions, external session invalidation and rejected reload are verified.
+This is local browser evidence, not remote operational E2E or an R2/CORS gate.
+
+| Executed gate | Final result |
+| --- | --- |
+| Focused App + orchestration tests | PASS 118/118, 2 files |
+| Focused Chromium FIX-01 spec | PASS 22/22 |
+| npm run typecheck | PASS |
+| npm run lint | PASS, zero warnings |
+| npm test -- src/features/reception | PASS 506/506, 10 files |
+| npm test -- src/shared/media | PASS 332/332, 10 files |
+| npm test | PASS 1271/1271, 47 files |
+| npm run test:e2e:harness | PASS 191/191, 11 files; includes new Chromium cases |
+| npm run build | PASS; existing >500 kB chunk warning |
+| git diff --check | PASS, including staged changes before commit |
+| git status --short | Scoped changes inspected; final committed status in handoff |
+
+Final gates execute all cases without skipped tests. The harness deliberately
+expects its three original secure failure controls and one insecure control to
+fail; no new FIX-01 failure is accepted. The focused command is
+`npm test -- src/app/App.test.tsx src/features/reception/reception-media-orchestration.test.tsx`.
+The browser spec is also executable directly with HARNESS_OUT_DIR set to an OS
+temporary directory, HARNESS_SUITE=secure, and the existing Playwright harness config.
+
+Intermediate issues were corrected, not hidden: jsdom's dialog visibility stub
+needed a DOM-existence guard for node-environment suites; the first browser fixture
+used non-image bytes and was replaced with a valid synthetic PNG; Playwright
+reload waited for a load event after a deliberately rejected beforeunload, so the
+final case triggers the real browser reload and checks the dialog plus retained
+URL/preview instead. Final type/lint and relevant regression/harness gates were
+rerun after these fixes.
+
+### Changed files and local handoff
+
+- Production: src/app/App.tsx; src/app/shell/app-shell.tsx;
+  src/features/reception/new-reception-page.tsx;
+  src/shared/navigation/voluntary-exit.tsx.
+- Tests/support: src/app/App.test.tsx; src/app/dashboard-route.test.tsx;
+  src/features/reception/reception-media-orchestration.test.tsx;
+  src/features/reception/reception-media.test.tsx; src/test/render-reception.tsx;
+  src/test/data-memory-router.tsx; src/test/setup.ts.
+- Browser harness: e2e-harness-tests/tsconfig.json;
+  e2e-harness-tests/browser/fixtures/navigation.html;
+  e2e-harness-tests/browser/fixtures/navigation.tsx;
+  e2e-harness-tests/browser/secure/desktop-fix01-navigation.spec.ts.
+- Evidence: docs/quality/s4-f07-b-reception-media-orchestration.md.
+
+A single local child commit of the initial HEAD contains the fix and this evidence:
+`fix(reception): guard pending media on navigation and session actions`.
+The final commit SHA and clean git status are supplied in the handoff. No push,
+PR or backend changes.
+
+Remaining risks: browser/OS handling of full-document unload cannot guarantee
+recovery after process termination; Files intentionally remain memory-only.
+Provisioned remote Clerk/backend/R2/CORS and F07-C evidence remain outstanding.
+Other engines beyond the local Chromium harness are not certified. The old
+unavailable review findings remain open for recovery; FIX-01 closes only the
+confirmed Recovery Review finding. No Sprint 4 PASS is declared.
+
+S4-F07-B FIX-01: READY_FOR_RE_REVIEW

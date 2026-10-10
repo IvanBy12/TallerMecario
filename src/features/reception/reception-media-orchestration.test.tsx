@@ -1,5 +1,6 @@
+import { MemoryRouter } from '@/test/data-memory-router';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createApiClient, type FetchResponse } from '@/shared/api/http-client';
 import type { MediaResult, StorageResponse } from '@/shared/media/media-types';
@@ -167,7 +168,7 @@ describe('F07-B production post-create orchestration (synthetic HTTP/storage)', 
     expect(screen.getByText('Recepción creada. Ahora puedes completar la carga de la evidencia.')).toBeDefined(); expect(screen.getByRole('img')).toBeDefined(); expect(revoke).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /Reiniciar|Reintentar asociación|^Subir/ })).toBeNull();
     expect(mediaCalls(h.calls)).toHaveLength(1); expect(storage).toHaveBeenCalledTimes(1); expect(creates(h.calls)).toHaveLength(1);
-    click('Continuar a la recepción sin completar esta evidencia'); await screen.findByRole('heading', { name: 'Detalle de recepción' }); expect(revoke).toHaveBeenCalledTimes(1);
+    click('Continuar a la recepción sin completar esta evidencia'); click('Salir y descartar archivos locales'); await screen.findByRole('heading', { name: 'Detalle de recepción' }); expect(revoke).toHaveBeenCalledTimes(1);
   });
   it.each(['network', 'malformed', 'pending'] as const)('completion %s is ambiguous: no attach or blind restart', async failure => {
     const h = await createWithPhoto(call => call.url.pathname.endsWith('/complete') ? failure === 'network' ? Promise.reject(new Error('synthetic')) : jsonResponse(failure === 'pending' ? { ...CONFIRMED_MEDIA, status: 'pending' } : { invalid: true }) : defaults(call));
@@ -197,7 +198,7 @@ describe('F07-B production post-create orchestration (synthetic HTTP/storage)', 
     click('Subir foto 1'); await flush(); click('Subir foto 2'); await flush();
     expect(screen.getByText('Foto 1 · Evidencia guardada')).toBeDefined(); expect(screen.getByText('Subiendo el archivo.')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Continuar a la recepción' })).toBeNull(); expect(screen.getByText(/La recepción ya existe. Hay evidencia sin asociación confirmada/)).toBeDefined();
-    click('Continuar a la recepción sin completar esta evidencia'); await screen.findByRole('heading', { name: 'Detalle de recepción' });
+    click('Continuar a la recepción sin completar esta evidencia'); click('Salir y descartar archivos locales'); await screen.findByRole('heading', { name: 'Detalle de recepción' });
     expect(storage.mock.calls[1]?.[1].signal?.aborted).toBe(true); expect(creates(h.calls)).toHaveLength(1); expect(revoke).toHaveBeenCalledTimes(2);
   });
   it.each(['tenant', 'identity', 'permission', 'unmount'] as const)('%s invalidation aborts upload and releases local Files with no late attach', async change => {
@@ -225,12 +226,127 @@ describe('F07-B production post-create orchestration (synthetic HTTP/storage)', 
     expect(screen.queryByText(/Evidencia guardada/)).toBeNull(); expect(h.calls.filter(c => c.url.pathname.endsWith('/media'))).toHaveLength(1); expect(creates(h.calls)).toHaveLength(1);
   });
   it('protects link navigation and browser unload while unassociated evidence remains', async () => {
-    const h = await createWithPhoto(); const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    fireEvent.click(screen.getByRole('link', { name: 'Saltar al contenido principal' })); expect(confirm).not.toHaveBeenCalled();
+    const h = await createWithPhoto();
+    fireEvent.click(screen.getByRole('link', { name: 'Saltar al contenido principal' })); expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('link', { name: 'Volver a recepciones' }));
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('La recepción ya existe.')); expect(screen.getByRole('img')).toBeDefined();
+    expect(screen.getByRole('dialog').textContent).toContain('La recepción ya creada permanecerá guardada.'); click('Permanecer aquí'); expect(screen.getByRole('img')).toBeDefined();
     const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); expect(event.defaultPrevented).toBe(true);
     h.unmount(); const after = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(after); expect(after.defaultPrevented).toBe(false);
+  });
+});
+
+type PendingStage = 'local' | 'createdLocal' | 'preparing' | 'uploading' | 'completing' | 'associating' | 'failedAssociation' | 'ambiguousCompletion';
+async function pendingStage(stage: PendingStage, exits = {}, strict = false) {
+  const delayed = deferred<FetchResponse>(), put = deferred<StorageResponse>();
+  if (stage === 'uploading') storage.mockImplementation(() => put.promise);
+  const h = renderReception('/recepciones/nueva', call => {
+    if ((stage === 'preparing' && call.url.pathname.endsWith('/upload-sessions')) ||
+      (stage === 'completing' && call.url.pathname.endsWith('/complete')) ||
+      (stage === 'associating' && call.url.pathname.endsWith('/media'))) return delayed.promise;
+    if (stage === 'failedAssociation' && call.url.pathname.endsWith('/media')) return errorResponse('INTERNAL_ERROR', 500);
+    if (stage === 'ambiguousCompletion' && call.url.pathname.endsWith('/complete')) return jsonResponse({ invalid: true });
+    return defaults(call);
+  }, permissions, strict, exits);
+  await prepare(); await capture(); const original = photo(); choosePhotos([original]);
+  if (stage !== 'local') { click('Crear recepción'); await flush(); }
+  if (!['local', 'createdLocal'].includes(stage)) { click('Subir foto 1'); await flush(); }
+  return { ...h, original, delayed, put };
+}
+const stages: readonly PendingStage[] = ['local', 'createdLocal', 'preparing', 'uploading', 'completing', 'associating', 'failedAssociation', 'ambiguousCompletion'];
+const transitions = ['Back', 'Forward', 'programmatic', 'replace'] as const;
+async function transition(h: Awaited<ReturnType<typeof pendingStage>>, kind: typeof transitions[number]) {
+  await act(async () => { if (kind === 'Back' || kind === 'Forward') await h.router.navigate(kind === 'Back' ? -1 : 1); else await h.router.navigate('/panel', { replace: kind === 'replace' }); });
+}
+describe('FIX-01 real router and shell regressions', () => {
+  for (const stage of stages) {
+    it.each(transitions)(`rejects %s in ${stage} without losing File, preview or operation`, async kind => {
+      const h = await pendingStage(stage); const preview = screen.getByRole('img').getAttribute('src');
+      const before = h.calls.length;
+      await transition(h, kind);
+      const dialog = screen.getByRole('dialog');
+      expect(dialog.textContent).toContain(stage === 'local' ? 'La recepción todavía no se ha creado.' : 'La recepción ya creada permanecerá guardada.');
+      click('Permanecer aquí');
+      expect(h.router.state.location.pathname).toBe('/recepciones/nueva'); expect(screen.getByRole('img').getAttribute('src')).toBe(preview);
+      expect(revoke).not.toHaveBeenCalled(); expect(h.calls).toHaveLength(before);
+      for (const call of h.calls) expect(call.init.signal?.aborted).toBe(false);
+      for (const call of storage.mock.calls) expect(call[1].signal?.aborted).toBe(false);
+      if (stage === 'local') { click('Crear recepción'); await flush(); }
+      if (stage === 'local' || stage === 'createdLocal') { click('Subir foto 1'); await flush(); }
+      expect(uploads[0]?.mock.calls[0]?.[1]).toBe(h.original);
+      expect(creates(h.calls)).toHaveLength(1);
+    });
+    it.each(transitions)(`accepts %s in ${stage} once and releases without mutation replay`, async kind => {
+      const h = await pendingStage(stage); const mutations = h.calls.filter(call => call.init.method === 'POST').length;
+      await transition(h, kind); click('Salir y descartar archivos locales'); await flush();
+      expect(h.router.state.location.pathname).toBe(kind === 'Forward' ? '/vehiculos' : '/panel');
+      expect(screen.queryByRole('dialog')).toBeNull(); expect(screen.queryByRole('img')).toBeNull(); expect(revoke).toHaveBeenCalledTimes(1);
+      if (stage === 'uploading') expect(storage.mock.calls[0]?.[1].signal?.aborted).toBe(true);
+      if (stage === 'associating') expect(h.calls.find(call => call.url.pathname.endsWith('/media'))?.init.signal?.aborted).toBe(true);
+      act(() => { h.put.resolve({ ok: true, status: 200, redirected: false, type: 'basic' }); h.delayed.resolve(jsonResponse(CONFIRMED_MEDIA)); }); await flush();
+      expect(h.calls.filter(call => call.init.method === 'POST')).toHaveLength(mutations);
+      expect(creates(h.calls)).toHaveLength(stage === 'local' ? 0 : 1);
+    });
+  }
+  for (const stage of ['local', 'uploading', 'associating'] as const) {
+    for (const name of ['Cambiar taller', 'Cerrar sesión']) {
+      it.each([false, true])(`${name} in ${stage}: accept=%s coordinates exactly one callback`, async accept => {
+        const onSignOut = vi.fn(), onChangeWorkshop = vi.fn();
+        const h = await pendingStage(stage, { onSignOut, onChangeWorkshop });
+        const before = h.calls.filter(c => c.init.method === 'POST').length;
+        click(name); click(name); expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        click(accept ? 'Salir y descartar archivos locales' : 'Permanecer aquí'); await flush();
+        const chosen = name === 'Cerrar sesión' ? onSignOut : onChangeWorkshop;
+        const other = name === 'Cerrar sesión' ? onChangeWorkshop : onSignOut;
+        expect(chosen).toHaveBeenCalledTimes(accept ? 1 : 0); expect(other).not.toHaveBeenCalled();
+        expect(revoke).toHaveBeenCalledTimes(accept ? 1 : 0); expect(screen.queryByRole('img') === null).toBe(accept);
+        if (stage === 'uploading') expect(storage.mock.calls[0]?.[1].signal?.aborted).toBe(accept);
+        if (stage === 'associating') expect(h.calls.find(c => c.url.pathname.endsWith('/media'))?.init.signal?.aborted).toBe(accept);
+        expect(h.calls.filter(c => c.init.method === 'POST')).toHaveLength(before); expect(screen.queryByRole('dialog')).toBeNull();
+      });
+    }
+  }
+  it.each(['tenant', 'identity', 'permission', 'session'] as const)('%s invalidation overrides an open voluntary dialog immediately', async change => {
+    const callback = vi.fn(); const h = await pendingStage('uploading', { onSignOut: callback });
+    click('Cerrar sesión'); expect(screen.getByRole('dialog')).toBeDefined();
+    h.updateRuntime(change === 'session' ? null : { ...h.runtime, ...(change === 'tenant' ? { tenantId: IDS.other } : change === 'identity' ? { identity: 'external-identity' } : { permissions: PERMISSIONS }) });
+    await flush(); expect(screen.queryByRole('dialog')).toBeNull(); expect(screen.queryByRole('img')).toBeNull();
+    expect(callback).not.toHaveBeenCalled(); expect(storage.mock.calls[0]?.[1].signal?.aborted).toBe(true); expect(revoke).toHaveBeenCalledTimes(1);
+  });
+  it('permission loss resets a blocked history intent without proceeding to its stale target', async () => {
+    const h = await pendingStage('associating'); await transition(h, 'Back');
+    expect(screen.getByRole('dialog')).toBeDefined(); h.updateRuntime({ ...h.runtime, permissions: PERMISSIONS }); await flush();
+    expect(screen.queryByRole('dialog')).toBeNull(); expect(h.router.state.location.pathname).toBe('/recepciones/nueva'); expect(revoke).toHaveBeenCalledTimes(1);
+    expect(h.calls.find(c => c.url.pathname.endsWith('/media'))?.init.signal?.aborted).toBe(true);
+  });
+  it('equivalent refresh keeps the guard, File and running PUT while a dialog is open', async () => {
+    const h = await pendingStage('uploading'); const preview = screen.getByRole('img').getAttribute('src'); await transition(h, 'Back');
+    h.updateRuntime({ ...h.runtime, permissions: [...permissions].reverse() }); await flush();
+    expect(screen.getByRole('dialog')).toBeDefined(); click('Permanecer aquí'); expect(screen.getByRole('img').getAttribute('src')).toBe(preview);
+    expect(storage.mock.calls[0]?.[1].signal?.aborted).toBe(false); expect(revoke).not.toHaveBeenCalled();
+  });
+  it('no pending evidence permits history and both original shell callbacks', async () => {
+    const callback = vi.fn(); const h = renderReception('/recepciones/nueva', defaults, permissions, false, { onChangeWorkshop: callback, onSignOut: callback });
+    click('Cambiar taller'); click('Cerrar sesión'); expect(callback).toHaveBeenCalledTimes(2);
+    await act(async () => { await h.router.navigate(-1); }); expect(h.router.state.location.pathname).toBe('/panel'); expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('all associated evidence permits continuation, history and shell without a dialog', async () => {
+    const callback = vi.fn(); const h = await pendingStage('createdLocal', { onSignOut: callback });
+    click('Subir foto 1'); await flush(); click('Cerrar sesión'); expect(callback).toHaveBeenCalledTimes(1); expect(screen.queryByRole('dialog')).toBeNull();
+    click('Continuar a la recepción'); await flush(); expect(h.router.state.location.pathname).toBe(`/recepciones/${IDS.reception}`);
+    await act(async () => { await h.router.navigate(-1); }); expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('Strict Mode unregisters old guards on exit/unmount and does not duplicate confirmation', async () => {
+    const callback = vi.fn(); const h = await pendingStage('createdLocal', { onSignOut: callback }, true);
+    click('Cerrar sesión'); expect(screen.getAllByRole('dialog')).toHaveLength(1); click('Permanecer aquí');
+    fireEvent.click(screen.getByRole('link', { name: 'Volver a recepciones' })); expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    click('Salir y descartar archivos locales'); await flush(); click('Cerrar sesión'); expect(callback).toHaveBeenCalledTimes(1);
+    expect(creates(h.calls)).toHaveLength(1); h.unmount();
+    const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); expect(event.defaultPrevented).toBe(false);
+  });
+  it('Escape dismisses the dialog and restores focus without discarding', async () => {
+    await pendingStage('createdLocal'); const button = screen.getByRole('button', { name: 'Cerrar sesión' }); button.focus(); fireEvent.click(button);
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
+    expect(screen.queryByRole('dialog')).toBeNull(); expect(document.activeElement).toBe(button); expect(revoke).not.toHaveBeenCalled();
   });
 });
 

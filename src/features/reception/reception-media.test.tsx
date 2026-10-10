@@ -1,6 +1,7 @@
+import { MemoryRouter } from '@/test/data-memory-router';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { StrictMode } from 'react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createMediaClient } from '@/shared/media/media-client';
 import type { MediaApiAdapter, MediaResult, ConfirmedMedia } from '@/shared/media/media-types';

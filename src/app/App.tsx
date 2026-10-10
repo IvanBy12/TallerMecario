@@ -1,4 +1,6 @@
-import { BrowserRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { useLayoutEffect, useState } from 'react';
+import { VoluntaryExitProvider } from '@/shared/navigation/voluntary-exit';
+import { createBrowserRouter, RouterProvider, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 
 import { ConfigIssuesPanel } from '@/features/auth/auth-gate';
 import { AuthProvider } from '@/features/auth/auth-provider';
@@ -24,9 +26,9 @@ function SessionArea({ envResult }: AppProps) {
 }
 
 /** La landing no monta Clerk; login y rutas privadas comparten la sesión y el contexto G1–G5. */
-export function App({ envResult }: AppProps) {
+function AppPages({ envResult }: AppProps) {
   return (
-    <BrowserRouter>
+    <VoluntaryExitProvider>
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route element={<SessionArea envResult={envResult} />}>
@@ -34,6 +36,17 @@ export function App({ envResult }: AppProps) {
           <Route path="*" element={<AuthenticatedRoot />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </VoluntaryExitProvider>
   );
+}
+
+/** A single data-router root enables supported history blocking; descendant route tables stay declarative. */
+export function App({ envResult }: AppProps) {
+  const [router, setRouter] = useState<ReturnType<typeof createBrowserRouter> | null>(null);
+  useLayoutEffect(() => {
+    const next = createBrowserRouter([{ path: '*', element: <AppPages envResult={envResult}/> }]);
+    setRouter(next);
+    return () => { next.dispose(); };
+  }, [envResult]);
+  return router === null ? null : <RouterProvider router={router}/>;
 }
