@@ -24,7 +24,7 @@ const media = [
   { mediaAssetId: asset, mediaType: 'photo', mimeType: 'image/png', sizeBytes: 3, capturedAt: TIME, uploadedAt: TIME, purpose: 'intake_evidence', sortOrder: 0 },
   { mediaAssetId: IDS.other, mediaType: 'video360', mimeType: 'video/mp4', sizeBytes: 3, capturedAt: TIME, uploadedAt: TIME, purpose: 'intake_evidence', sortOrder: 1 },
 ];
-async function prepare(page: Page, status = 200, ttl = 60000) {
+async function prepare(page: Page, status = 200, ttl = 60000, beforeDownload?: () => Promise<void>) {
   const seen = { lists: 0, downloads: 0, binaries: 0, storageCredentials: false };
   await page.route('https://api.gallery.example.test/**', async route => {
     const url = new URL(route.request().url());
@@ -33,6 +33,7 @@ async function prepare(page: Page, status = 200, ttl = 60000) {
     if (url.pathname.endsWith('/media')) { seen.lists++; data = { media }; }
     if (url.pathname.endsWith('/download-url')) {
       seen.downloads++; reply = status;
+      await beforeDownload?.();
       const id = url.pathname.split('/').at(-2);
       data = status === 200 ? { mediaAssetId: id,
         downloadUrl: `https://storage.gallery.example.test/${id === asset ? 'photo' : 'video'}?signature=synthetic-${String(seen.downloads)}`,
@@ -95,4 +96,69 @@ test('F07-C Chromium inaccessible asset preserves reception and does not fetch a
   expect(seen.downloads).toBe(1); expect(seen.binaries).toBe(0);
   await expect(page.getByText(`${String(DETAIL.mileageKm)} km`)).toBeVisible();
   await expect(page.getByText('PRIVATE STORAGE COPY')).toHaveCount(0);
+});
+
+for (const input of ['click', 'Enter'] as const) {
+  test(`F-1 Chromium focus stays on the same DOM button across loading/ready/hide cycles with ${input}`, async ({ page }) => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const seen = await prepare(page, 200, 60000, () => pending);
+    const button = await page.getByRole('button', { name: 'Ver Foto 1' }).elementHandle();
+    const activate = async () => { if (input === 'click') await button.click(); else await page.keyboard.press('Enter'); };
+    await button.focus(); await activate();
+    try {
+      await expect(page.getByText('Solicitando acceso temporal…')).toBeVisible();
+      expect(await button.evaluate(element => document.activeElement === element)).toBe(true);
+      await expect(page.getByRole('button', { name: 'Ocultar Foto 1' })).toBeEnabled();
+      expect(seen.downloads).toBe(1);
+    } finally { release(); }
+    for (let cycle = 0; cycle < 3; cycle++) {
+      if (cycle > 0) await activate();
+      await expect(page.getByRole('img')).toBeVisible();
+      expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('BUTTON');
+      expect(await button.evaluate(element => document.activeElement === element)).toBe(true);
+      await expect(page.getByRole('button', { name: 'Ocultar Foto 1' })).toBeFocused();
+      await activate();
+      await expect(page.getByRole('img')).toHaveCount(0);
+      expect(await button.evaluate(element => document.activeElement === element)).toBe(true);
+      await expect(page.getByRole('button', { name: 'Ver Foto 1' })).toBeFocused();
+      expect(seen.downloads).toBe(cycle + 1);
+    }
+  });
+}
+test('F-1 Chromium download error keeps focus and the accessible retry control', async ({ page }) => {
+  const seen = await prepare(page, 404);
+  const button = await page.getByRole('button', { name: 'Ver Foto 1' }).elementHandle();
+  await button.focus(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('alert')).toContainText('La evidencia no existe');
+  expect(await button.evaluate(element => document.activeElement === element)).toBe(true);
+  await expect(page.getByRole('button', { name: 'Ver Foto 1' })).toBeFocused();
+  expect(seen.downloads).toBe(1); expect(seen.binaries).toBe(0);
+});
+test('F-1 Chromium expiry keeps focus and never renews the signed URL automatically', async ({ page }) => {
+  const seen = await prepare(page, 200, 1500);
+  const button = await page.getByRole('button', { name: 'Ver Foto 1' }).elementHandle();
+  await button.focus(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('img')).toBeVisible();
+  expect(await button.evaluate(element => document.activeElement === element)).toBe(true);
+  await expect(page.getByText(/El acceso temporal expiró/)).toBeVisible();
+  expect(await button.evaluate(element => document.activeElement === element)).toBe(true);
+  await expect(page.getByRole('button', { name: 'Ver Foto 1' })).toBeFocused();
+  await expect(page.getByRole('img')).toHaveCount(0); expect(seen.downloads).toBe(1);
+});
+test('F-1 Chromium Enter cancels loading while preserving focus and discarding the late response', async ({ page }) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const seen = await prepare(page, 200, 60000, () => pending);
+  const button = await page.getByRole('button', { name: 'Ver Foto 1' }).elementHandle();
+  try {
+    await button.focus(); await page.keyboard.press('Enter');
+    await expect(page.getByText('Solicitando acceso temporal…')).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('button', { name: 'Ver Foto 1' })).toBeEnabled();
+    expect(await button.evaluate(element => document.activeElement === element)).toBe(true);
+  } finally { release(); }
+  await expect(page.getByText('Solicitando acceso temporal…')).toHaveCount(0);
+  await expect(page.getByRole('img')).toHaveCount(0);
+  expect(seen.downloads).toBe(1); expect(seen.binaries).toBe(0);
 });

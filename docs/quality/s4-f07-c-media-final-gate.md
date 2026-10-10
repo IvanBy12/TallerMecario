@@ -5,14 +5,18 @@ verificación frontend. **Fase 3 real: BLOCKED. Quality Gate Sprint 4: NOT_READY
 no PASSED.** El cambio local se prepara para revisión independiente; esta ejecución
 no constituye esa revisión ni autoriza push, PR, merge, despliegue o release.
 
+La evidencia original siguiente corresponde al HEAD revisado
+`e1d38acd5479185645f8b259479d47924fe7955d`. Se conserva como historial; el
+addendum F-1/F-2 al final registra el patch adicional y sus gates de re-review.
+
 ## Versión, ambiente y autoridad
 
 - Rama: `task/s4-f07-c-media-final-gate`.
 - Base: `98da61425adcdfb43391abfcbc8f0188f8551f9e`; worktree inicialmente limpio,
   `/Users/ivanby/Documents/Proyectos/TallerMecario-worktrees/s4-f07-c-media-final-gate`.
-- Commit de entrega: el commit que contiene este informe y la implementación.
-  Identificarlo con `git log -1 --format=%H -- docs/quality/s4-f07-c-media-final-gate.md`;
-  el SHA exacto se entrega en el handoff. Se evita un hash autorreferente ficticio.
+- Commit de entrega original: `e1d38acd5479185645f8b259479d47924fe7955d`.
+  El commit adicional de correcciones se identifica en el addendum y handoff;
+  no sustituye ni reescribe esta evidencia original.
 - macOS, Node **v22.23.3**, npm **10.9.9**, versiones compatibles con `.nvmrc` y engines.
   Dependencias fijadas ya presentes en el checkout principal, usadas mediante enlace
   local temporal `node_modules`, retirado al entregar. No dependencia/lockfile nuevo.
@@ -89,7 +93,7 @@ No media de daños, firma, retención frontend ni persistencia offline añadidos
 
 ## Pruebas y resultados
 
-Resultado final de comandos sobre el contenido de este commit:
+Resultado final de comandos sobre el contenido del commit original `e1d38acd5479185645f8b259479d47924fe7955d`:
 
 | Verificación | Resultado | Naturaleza |
 | --- | --- | --- |
@@ -254,3 +258,134 @@ video reproducible, entorno, CI y staging permanece pendiente.
 **Decisión: frontend preparado para revisión independiente; fase E2E real BLOCKED;
 Quality Gate Sprint 4 NOT_READY. Estado global S4-F07-C: BLOCKED por evidencia real
 pendiente. No Sprint 4 PASSED ni release habilitado.**
+
+## Addendum — Correcciones F-1/F-2 para re-review independiente
+
+Fecha: **2026-10-10, America/Bogota**. Solicitud: corregir exactamente los dos
+findings accionables del review independiente `S4-F07-C CODE REVIEW: FINDINGS`.
+Base de rama `98da61425adcdfb43391abfcbc8f0188f8551f9e`; HEAD revisado y padre de
+este patch: `e1d38acd5479185645f8b259479d47924fe7955d`. Worktree/rama originales,
+inicialmente limpios. El HEAD corregido es el commit local adicional que contiene
+este addendum, resoluble con
+`git log -1 --format=%H -- docs/quality/s4-f07-c-media-final-gate.md`; su SHA exacto
+se informa en la entrega. Mensaje requerido:
+`fix(reception): preserve gallery focus and test reception isolation`.
+
+### F-1 — MEDIUM: foco al alternar Ver/Ocultar
+
+Reproducción realizada **antes de cambiar producción**, sobre el HEAD revisado,
+con las nuevas pruebas añadidas al worktree:
+
+- Vitest: 44 casos de galería, **40 passed / 4 failed**. Los 37 previos y las tres
+  regresiones F-2 pasaron; los cuatro nuevos F-1 fallaron. Fallos de identidad del
+  control durante loading/cancelación y `document.activeElement = body` en
+  transiciones a error/ready.
+- Chromium: **5/5 nuevas pruebas F-1 failed**. En el ciclo por click, después de
+  ready se observó literalmente `Expected BUTTON / Received BODY`; Enter, error y
+  expiración perdieron el control enfocado. Cancelar por Enter durante loading
+  tampoco encontraba un control Ver habilitado: seguía el botón original disabled.
+- Reporte previo sintético:
+  `/private/tmp/tm-s4-f07-c-fixes-before/report.json`; salida del runner en el mismo
+  directorio. Comando directo con `HARNESS_OUT_DIR` apuntando allí,
+  `HARNESS_SUITE=secure`, config `e2e-harness-tests/browser/playwright.harness.config.ts`,
+  spec `desktop-operational-gallery.spec.ts`, filtro `--grep F-1`. Estos fallos son
+  reproducción del defecto, no fallos forzados del harness.
+
+Corrección mínima: `GalleryItem` mantiene **un solo botón nativo, siempre en el
+mismo lugar y con la misma identidad DOM**. Idle/error: «Ver» abre una consulta;
+loading/ready: «Ocultar» cancela u oculta. Durante loading permanece habilitado para
+cancelar. El bloqueo Retry-After existente sigue aplicándose al solicitar acceso.
+`aria-expanded` refleja la visualización; nombres accesibles conservan tipo y
+posición del medio. No autofocus, movimiento programático de foco ni cambio de
+ApiClient/adaptador/hook/transportes. Las regiones status/alert existentes permanecen.
+
+Resultados tras la corrección: **44/44** pruebas de galería; **9/9 Chromium**,
+compuestos por los cuatro escenarios originales y cinco nuevos F-1. Clic y Enter
+mantienen `document.activeElement === botón_original` en loading/ready/hide y tres
+ciclos consecutivos; error, expiración y cancelación conservan ese mismo control.
+Los nombres se comprueban por role/name y los conteos de download demuestran una
+solicitud por apertura, ninguna por ocultar/cancelar y ninguna renovación automática.
+Cancelación aborta la consulta y descarta la respuesta tardía. No se retiraron
+assertions, tests, casos negativos ni controles de privacidad.
+
+La cobertura usa controles HTML nativos y nombres/roles accesibles calculados por
+el navegador. No se presenta como una sesión manual con un lector de pantalla
+real: esa validación asistiva de campo no se ejecutó en este entorno.
+
+### F-2 — LOW: cambio de receptionId en la composición real
+
+Tres nuevas pruebas con `renderReception`, AppRoutes/RouterProvider,
+ReceptionProvider, ReceptionDetailPage, galería, adaptador, cliente y parsers reales;
+solo las respuestas HTTP y el recurso de media son sintéticos. **3/3 pasaron antes
+y después de F-1. No se necesitó corrección productiva F-2.**
+
+1. Recepción A lista video360 y foto. Su video usa una capacidad visible, y una
+   segunda descarga queda pendiente. Se navega mediante `router.navigate` a B:
+   la vista anterior desaparece antes de resolver el listado B; la URL A ya no
+   está en DOM; el video A se desconecta, pausa, retira src y ejecuta load; la
+   descarga A pendiente se aborta. Resolver tarde A no crea un visor. B carga su
+   propia lista y solicita su propio asset únicamente al pulsar Ver. Se comprueban
+   los receptionIds exactos de ambas listas, los mediaAssetIds de cada download y
+   que solo la URL B queda visible, sin reutilizar la anterior.
+2. List A pendiente → ruta B → respuesta A tardía: el request anterior está
+   abortado, B conserva exclusivamente su video en el listado, sin download
+   automático ni medios A visibles.
+3. Mismo escenario con cambio de tenant: después de navegar se remonta el contexto,
+   y el nuevo listado usa `receptionId=B` y `X-Tenant-Id` del tenant nuevo. La
+   respuesta A tardía no reaparece. Esta prueba acredita aislamiento del estado
+   frontend, no sustituye autorización/aislamiento real del backend.
+
+### Gates de la corrección
+
+Mismo ambiente local Node v22.23.3/npm 10.9.9 y dependencias fijadas de la entrega
+original; enlace temporal node_modules retirado antes de entregar. Sin dependencias
+nuevas, backend, upload client, contratos, navegación F07-B ni CORS modificados.
+
+| Comando/caso | Resultado final |
+| --- | --- |
+| Nuevas pruebas + galería completa | PASS 44/44; 4 F-1 + 3 F-2 nuevos |
+| Chromium directo, originales + F-1 | PASS 9/9; 4 originales + 5 nuevos |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS, 0 warnings |
+| `npm test -- src/features/reception` | PASS 550/550, 11 archivos |
+| `npm test -- src/shared/media` | PASS 332/332, 10 archivos |
+| `npm test` | PASS 1315/1315, 48 archivos |
+| `npm run test:e2e:harness` | PASS 191/191, 11 archivos |
+| `npm run build` | PASS; mismo warning chunk >500 kB |
+| `git diff --check` | PASS |
+
+El primer lint de la corrección encontró cuatro guards `button === null`
+inaplicables al tipo no nullable devuelto por Locator.elementHandle; se retiraron
+solo esas ramas imposibles, sin suprimir diagnostics ni assertions. El locator
+espera/exige que exista el control y falla por sí mismo si falta. Se repitieron
+lint/typecheck y el harness con las pruebas Chromium finales.
+
+Reporte Chromium directo posterior en
+`/private/tmp/tm-s4-f07-c-fixes-after/report.json`. Los reportes antes/después son
+sintéticos y temporales, con trace/screenshot/video deshabilitados. Las pruebas
+versionadas reproducen la evidencia; no se adjuntan secretos ni capacidades reales.
+Último reporte secure del harness:
+`/var/folders/_7/kzlf6w351z11_2mcs7tn_kxc0000gn/T/tm-e2e-harness-secure-Rb6NQ8/report.json`.
+44 casos Chromium: 41 passed y los 3 failed deliberados requeridos por el harness;
+los nueve de galería (4 originales + 5 F-1) passed. Los controles de privacidad,
+reporters y F07-B FIX-01 mantuvieron sus assertions. Los fallos deliberados
+secure/control del harness original siguen siendo exigidos y no se confunden con
+F-1 ni con defectos del patch.
+
+### Límites y decisión de re-review
+
+Se conservan todas las limitaciones de la entrega original: reloj local para UX de
+expiresAt (clock skew puede retirar antes o después; servidor/storage es autoridad),
+URLs solo bajo demanda/sin persistencia ni logging y cleanup/abort vigentes.
+`crossOrigin=anonymous` sigue presente: la validación real de lectura requiere
+GET/Range desde el origen frontend autorizado, además de OPTIONS/PUT firmado.
+No se introduce compensación temporal ficticia, proxy ni relajación de CORS.
+
+**E2E real Clerk/API/R2 y CORS: BLOCKED por entorno, no ejecutados. Sprint 4 sigue
+NOT_READY.** Los resultados Chromium corresponden a servicios interceptados y no
+certifican R2 ni video real, staging o CI remoto. Ningún cambio backend ni revisión
+independiente nueva ejecutada por esta implementación.
+
+**Decisión de fixes: pendiente de re-review independiente del commit local.**
+Tras ese review: correcciones si procede → regresión → PR/CI → merge, en ese orden.
+Esta entrega no hace push ni PR y no declara Sprint 4 PASSED.

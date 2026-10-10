@@ -18,11 +18,14 @@ const labels = { photo: 'Foto', video: 'Video', video360: 'Video 360°' };
 function GalleryItem({ media, index }: { readonly media: ReceptionMediaDto; readonly index: number }) {
   const { state, blocked, open, close, inaccessible } = useOperationalMediaView(media.mediaAssetId);
   const label = `${labels[media.mediaType]} ${String(index + 1)}`;
+  const viewing = state.kind === 'ready' || state.kind === 'loading';
   return <li><h3>{label}</h3>
     {state.kind === 'loading' && <p role="status">Solicitando acceso temporal…</p>}
     {state.kind === 'error' && <p role="alert">{state.message}</p>}
-    {state.kind !== 'ready' && <button type="button" disabled={blocked || state.kind === 'loading'} onClick={() => { void open(); }}>Ver {label}</button>}
-    {(state.kind === 'ready' || state.kind === 'loading') && <button type="button" onClick={close}>Ocultar {label}</button>}
+    <button type="button" disabled={blocked && !viewing} aria-expanded={state.kind === 'ready'} onClick={() => {
+      if (viewing) close();
+      else void open();
+    }}>{viewing ? 'Ocultar' : 'Ver'} {label}</button>
     {state.kind === 'ready' && (media.mediaType === 'photo' ?
       <img className="reception-evidence-view" crossOrigin="anonymous" src={state.capability.downloadUrl} alt={`Evidencia de recepción: ${label}`} referrerPolicy="no-referrer" onError={inaccessible}/> :
       <VideoEvidence url={state.capability.downloadUrl} label={`Evidencia de recepción: ${label}`} onError={inaccessible}/>)}

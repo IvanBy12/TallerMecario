@@ -239,3 +239,156 @@ describe('operational gallery in reception detail with production provider/clien
   });
 
 });
+
+describe('F-1 focus regressions', () => {
+  it('keeps the same focused control through loading, ready and repeated view/hide clicks without duplicate requests', async () => {
+    let resolve!: (value: FetchResponse) => void;
+    const pending = new Promise<FetchResponse>(done => { resolve = done; });
+    let count = 0;
+    setup([dto], () => ++count === 1 ? pending : download());
+    const button = await screen.findByRole('button', { name: 'Ver Foto 1' });
+    button.focus(); fireEvent.click(button);
+    await screen.findByText('Solicitando acceso temporal…');
+    expect(document.activeElement).toBe(button);
+    expect(screen.getByRole('button', { name: 'Ocultar Foto 1' })).toBe(button);
+    expect(button.hasAttribute('disabled')).toBe(false);
+    await act(() => Promise.resolve().then(() => { resolve(download()); }));
+    await screen.findByRole('img');
+    expect(document.activeElement).toBe(button);
+    expect(screen.getByRole('button', { name: 'Ocultar Foto 1' })).toBe(button);
+    fireEvent.click(button);
+    expect(screen.getByRole('button', { name: 'Ver Foto 1' })).toBe(button);
+    expect(document.activeElement).toBe(button);
+    expect(screen.queryByRole('img')).toBeNull();
+    for (let cycle = 0; cycle < 2; cycle++) {
+      fireEvent.click(button); await screen.findByRole('img');
+      expect(document.activeElement).toBe(button);
+      fireEvent.click(button);
+      expect(document.activeElement).toBe(button);
+      expect(screen.getByRole('button', { name: 'Ver Foto 1' })).toBe(button);
+    }
+    expect(count).toBe(3);
+  });
+  it('keeps the focused control on download error and allows an explicit new request', async () => {
+    let count = 0;
+    setup([dto], () => ++count === 1 ? fail(404) : download());
+    const button = await screen.findByRole('button', { name: 'Ver Foto 1' });
+    button.focus(); fireEvent.click(button);
+    await screen.findByRole('alert');
+    expect(document.activeElement).toBe(button);
+    expect(screen.getByRole('button', { name: 'Ver Foto 1' })).toBe(button);
+    expect(count).toBe(1);
+    fireEvent.click(button); await screen.findByRole('img');
+    expect(document.activeElement).toBe(button); expect(count).toBe(2);
+  });
+  it('keeps the focused control at expiry without reusing or renewing the URL automatically', async () => {
+    vi.useFakeTimers();
+    let count = 0;
+    await act(() => Promise.resolve().then(() => { setup([dto], () => {
+      count++; return download(new Date(Date.now() + 1000).toISOString());
+    }); }));
+    const button = screen.getByRole('button', { name: 'Ver Foto 1' }); button.focus();
+    await act(() => Promise.resolve().then(() => { fireEvent.click(button); }));
+    expect(document.activeElement).toBe(button);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByRole('button', { name: 'Ver Foto 1' })).toBe(button);
+    expect(document.activeElement).toBe(button);
+    expect(screen.queryByRole('img')).toBeNull(); expect(count).toBe(1);
+  });
+  it('keeps focus when canceling loading and discards the late result', async () => {
+    let resolve!: (value: FetchResponse) => void;
+    const pending = new Promise<FetchResponse>(done => { resolve = done; });
+    const h = setup([dto], () => pending);
+    const button = await screen.findByRole('button', { name: 'Ver Foto 1' });
+    button.focus(); fireEvent.click(button);
+    await screen.findByText('Solicitando acceso temporal…');
+    expect(screen.getByRole('button', { name: 'Ocultar Foto 1' })).toBe(button);
+    fireEvent.click(button);
+    expect(document.activeElement).toBe(button);
+    expect(screen.getByRole('button', { name: 'Ver Foto 1' })).toBe(button);
+    expect(h.calls.find(call => call.url.pathname.endsWith('/download-url'))?.init.signal?.aborted).toBe(true);
+    await act(() => Promise.resolve().then(() => { resolve(download()); }));
+    expect(screen.queryByRole('img')).toBeNull(); expect(document.activeElement).toBe(button);
+    expect(h.calls.filter(call => call.url.pathname.endsWith('/download-url'))).toHaveLength(1);
+  });
+});
+
+describe('F-2 reception route isolation with real composition', () => {
+  it('reception A visible video and pending photo are discarded before B lists/displays only its own media', async () => {
+    const paused: HTMLMediaElement[] = [];
+    const loaded: HTMLMediaElement[] = [];
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(function (this: HTMLMediaElement) { paused.push(this); });
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function (this: HTMLMediaElement) { loaded.push(this); });
+    let resolveA!: (value: FetchResponse) => void, resolveB!: (value: FetchResponse) => void;
+    const latePhotoA = new Promise<FetchResponse>(done => { resolveA = done; });
+    const listB = new Promise<FetchResponse>(done => { resolveB = done; });
+    const urlB = 'https://storage.example.test/b?signature=synthetic-b';
+    const mediaB = { ...dto, mediaAssetId: IDS.vehicle };
+    const h = renderReception(`/recepciones/${IDS.reception}`, call => {
+      if (call.url.pathname === `/api/v1/receptions/${IDS.reception}/media`) return jsonResponse({ media: [
+        { ...dto, mediaType: 'video360', mimeType: 'video/mp4' }, { ...dto, mediaAssetId: IDS.customer },
+      ] });
+      if (call.url.pathname === `/api/v1/receptions/${IDS.other}/media`) return listB;
+      if (call.url.pathname === `/api/v1/media/${asset}/download-url`) return download();
+      if (call.url.pathname === `/api/v1/media/${IDS.customer}/download-url`) return latePhotoA;
+      if (call.url.pathname === `/api/v1/media/${IDS.vehicle}/download-url`) return jsonResponse({
+        mediaAssetId: IDS.vehicle, downloadUrl: urlB, expiresAt: new Date(Date.now() + 60000).toISOString(),
+      });
+      return jsonResponse({ reception: { ...DETAIL, receptionId: call.url.pathname.endsWith(IDS.other) ? IDS.other : IDS.reception } });
+    }, permissions);
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver Video 360° 1' }));
+    await waitFor(() => { expect(h.container.querySelector('video')?.getAttribute('src')).toBe(signed); });
+    const videoA = h.container.querySelector('video');
+    if (videoA === null) throw new Error('Expected reception A video');
+    fireEvent.click(screen.getByRole('button', { name: 'Ver Foto 2' }));
+    await screen.findByText('Solicitando acceso temporal…');
+    const pendingA = h.calls.find(call => call.url.pathname === `/api/v1/media/${IDS.customer}/download-url`);
+    await act(async () => { await h.router.navigate(`/recepciones/${IDS.other}`); });
+    await screen.findByText('Consultando evidencias…');
+    expect(h.container.querySelector('img, video')).toBeNull();
+    expect(h.container.innerHTML).not.toContain(signed);
+    expect(videoA.isConnected).toBe(false); expect(videoA.hasAttribute('src')).toBe(false);
+    expect(paused).toContain(videoA); expect(loaded).toContain(videoA);
+    expect(pendingA?.init.signal?.aborted).toBe(true);
+    await act(() => Promise.resolve().then(() => { resolveA(jsonResponse({
+      mediaAssetId: IDS.customer, downloadUrl: signed, expiresAt: new Date(Date.now() + 60000).toISOString(),
+    })); }));
+    expect(h.container.querySelector('img, video')).toBeNull();
+    expect(h.container.innerHTML).not.toContain(signed);
+    await act(() => Promise.resolve().then(() => { resolveB(jsonResponse({ media: [mediaB] })); }));
+    await open();
+    expect((await screen.findByRole('img')).getAttribute('src')).toBe(urlB);
+    expect(h.container.innerHTML).not.toContain(signed);
+    expect(h.container.querySelector('video')).toBeNull();
+    expect(h.calls.filter(call => call.url.pathname.endsWith('/media')).map(call => call.url.pathname)).toEqual([
+      `/api/v1/receptions/${IDS.reception}/media`, `/api/v1/receptions/${IDS.other}/media`,
+    ]);
+    expect(h.calls.filter(call => call.url.pathname.endsWith('/download-url')).map(call => call.url.pathname)).toEqual([
+      `/api/v1/media/${asset}/download-url`, `/api/v1/media/${IDS.customer}/download-url`, `/api/v1/media/${IDS.vehicle}/download-url`,
+    ]);
+  });
+  it.each([false, true])('late A list cannot affect B after route change (tenant change=%s)', async changeTenant => {
+    let resolve!: (value: FetchResponse) => void;
+    const listA = new Promise<FetchResponse>(done => { resolve = done; });
+    const mediaB = { ...dto, mediaAssetId: IDS.vehicle, mediaType: 'video', mimeType: 'video/mp4' };
+    const h = renderReception(`/recepciones/${IDS.reception}`, call => {
+      if (call.url.pathname === `/api/v1/receptions/${IDS.reception}/media`) return listA;
+      if (call.url.pathname === `/api/v1/receptions/${IDS.other}/media`) return jsonResponse({ media: [mediaB] });
+      return jsonResponse({ reception: { ...DETAIL, receptionId: call.url.pathname.endsWith(IDS.other) ? IDS.other : IDS.reception } });
+    }, permissions);
+    await screen.findByText('Consultando evidencias…');
+    const old = h.calls.find(call => call.url.pathname === `/api/v1/receptions/${IDS.reception}/media`);
+    await act(async () => { await h.router.navigate(`/recepciones/${IDS.other}`); });
+    if (changeTenant) act(() => { h.updateRuntime({ ...h.runtime, tenantId: IDS.customer }); });
+    await screen.findByRole('button', { name: 'Ver Video 1' });
+    expect(old?.init.signal?.aborted).toBe(true);
+    await act(() => Promise.resolve().then(() => { resolve(jsonResponse({ media: [dto] })); }));
+    expect(screen.queryByRole('button', { name: 'Ver Foto 1' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Ver Video 1' })).toBeTruthy();
+    expect(h.container.querySelector('img, video')).toBeNull(); expect(h.container.innerHTML).not.toContain(signed);
+    expect(h.calls.filter(call => call.url.pathname.endsWith('/download-url'))).toHaveLength(0);
+    const newList = h.calls.filter(call => call.url.pathname.endsWith('/media')).at(-1);
+    expect(newList?.url.pathname).toBe(`/api/v1/receptions/${IDS.other}/media`);
+    expect(newList?.init.headers).toMatchObject({ 'X-Tenant-Id': changeTenant ? IDS.customer : IDS.tenant });
+  });
+});
