@@ -333,3 +333,183 @@ unavailable review findings remain open for recovery; FIX-01 closes only the
 confirmed Recovery Review finding. No Sprint 4 PASS is declared.
 
 S4-F07-B FIX-01: READY_FOR_RE_REVIEW
+
+
+## Cierre documental y auditoría de aceptación F07-B — 2026-10-10
+
+### Fuente, alcance y responsables
+
+Auditoría documental: **Codex**, revisión independiente en esta conversación,
+2026-10-10, America/Bogota. Se reutilizan las ejecuciones comprobadas del
+re-review de FIX-01 del mismo día; no se vuelven a ejecutar suites por este
+cambio exclusivamente documental.
+
+Fuente canónica consultada directamente en Notion mediante la sesión existente
+de Safari: [Quality Gates — Reglas y Pruebas por Sprint](https://app.notion.com/p/3df6ab0a330d818486e9dd6f06b5f573?pvs=204),
+§1 (gate transversal), §2 (registro mínimo), §7 (Sprint 4), §21 (PASS/FAIL) y
+§22 (secuencia de aprobación). La interfaz indicó «Última edición: 5 oct»;
+no se infiere una hora de edición. El extracto local
+[frontend-relevant-gates.md](frontend-relevant-gates.md), exportado el
+2026-09-30, se conserva como snapshot histórico y no sustituye esa consulta.
+No se modifica Notion ni se introduce un gate de sprint nuevo.
+
+| Registro requerido | Evidencia / valor |
+| --- | --- |
+| Proyecto y rama | Frontend TallerMecario; `task/s4-f07-b-media-orchestration` |
+| Base revisada | `c61e9eeec281bec667c2b246d022c2795b493275` |
+| Implementación original | `d3ecbf25ffecd7f46a9aeb35d31ae5b890b8096f` |
+| Corrección FIX-01 | `2b58d5a02cba6b89da5ff103cf83f1a9b395aa1d` |
+| Fecha de corrección en Git | `2026-10-10T11:04:25-05:00`; autor Git: Ivan Patiño; mensaje `fix(reception): guard pending media on navigation and session actions` |
+| Responsable de verificación | Codex; Recovery Review, re-review independiente FIX-01 y esta auditoría documental. El autor Git no se presenta como agente implementador ni aprobador del gate |
+| Ambiente de verificación | Local macOS/Darwin 27; Node v22.23.3, npm 10.9.9; dependencias del lockfile; jsdom/Vitest y Chromium/Playwright |
+| Servicios usados por pruebas | HTTP, storage y puerto Clerk sintéticos; ningún Clerk/backend/PostgreSQL/R2 remoto certificado |
+| Diferencia de entorno | Gates que requieren cachés/dist o servidores en loopback se ejecutaron con el procedimiento autorizado fuera de la restricción sandbox; reportes de navegador en directorio temporal del sistema |
+| Defecto confirmado | MEDIUM: salidas por historial, navegación programática y acciones voluntarias del shell podían descartar evidencia local sin confirmación |
+| Resultado del re-review | `S4-F07-B FIX-01 RE-REVIEW: NO FINDINGS`; cero defectos accionables demostrados abiertos en el alcance revisado |
+| Decisión de esta auditoría | `READY_FOR_PR` para la revisión/integración incremental de F07-B; no declara Quality Gate de Sprint 4 `PASSED`, despliegue ni release |
+
+Los apartados anteriores son registros históricos: `READY_FOR_REVIEW`,
+`S4-F07-B FIXES: BLOCKED` y `READY_FOR_RE_REVIEW` describen sus momentos y
+alcances originales. Se conservan íntegros. Esta sección añade la decisión
+actual para F07-B después del re-review; no convierte los findings históricos
+sin descripción en defectos corregidos ni altera los resultados anteriores.
+
+### Registro de evidencia independiente
+
+- **E01 — Implementación y revisión:** diff original → FIX-01, 16 archivos,
+  +679/-39; interacción base → HEAD, 24 archivos, +1472/-183. Revisados
+  `App.tsx`, `AppShell`, `NewReceptionPage` y todo `voluntary-exit.tsx`, junto
+  con AuthenticatedRoot, AuthProvider, ReceptionProvider y rutas recepción/CRM.
+  HEAD y rama exactos, árbol limpio al iniciar/finalizar el re-review y
+  `git diff c61e9eeec281bec667c2b246d022c2795b493275..HEAD --check` PASS.
+- **E02 — Orquestación productiva con transportes sintéticos:**
+  [reception-media-orchestration.test.tsx](../../src/features/reception/reception-media-orchestration.test.tsx),
+  bloques `F07-B production post-create orchestration`, `FIX-01 real router
+  and shell regressions` y `F07-B deterministic selection keys and bounded
+  explicit dispatch`; ejecutados dentro de recepción 506/506 y suite 1271/1271.
+- **E03 — Regresión de media/seguridad:**
+  [reception-media.test.tsx](../../src/features/reception/reception-media.test.tsx)
+  y suite shared/media 332/332: elegibilidad, Files originales, ausencia de
+  persistencia, aislamiento de tareas, revocación y resultados tardíos.
+- **E04 — Router/App:**
+  [App.test.tsx](../../src/app/App.test.tsx),
+  [public-routes.test.tsx](../../src/app/public-routes.test.tsx) y pruebas de
+  dashboard/CRM incluidas en 1271/1271. Suplemento independiente: 18 casos
+  temporales de `app-integration.test.tsx` montan `App → AuthProvider →
+  AuthenticatedRoot → AppRoutes → ReceptionProvider`; solo Clerk y transportes
+  externos son sintéticos. Incluyen Back y acciones reales de autenticación
+  con File local/PUT/asociación, invalidación externa, render ordinario,
+  Strict Mode autenticado y deep links CRM con un nuevo montaje.
+- **E05 — Coordinador:** siete diagnósticos temporales de
+  `coordinator.test.tsx` sobre rutas/componentes productivos: clics repetidos,
+  acciones competidoras, navegación y shell pendientes en ambos órdenes,
+  intentos batched, múltiples destinos, rechazo seguido de otra acción y
+  unmount/listeners. Junto con E04: **25/25, dos archivos**.
+- **E06 — Chromium local real, fixture sintético:**
+  [desktop-fix01-navigation.spec.ts](../../e2e-harness-tests/browser/secure/desktop-fix01-navigation.spec.ts),
+  **22/22**, sin skipped, unexpected ni flaky. El JSON existente registra
+  inicio `2026-10-10T16:13:11.096Z` y duración 15413.585 ms. Navegación de
+  browser real; fixture monta AppRoutes/AppShell/Nueva recepción/proveedor y
+  coordinador, sin montar la composición completa de App ni contactar servicios
+  remotos. E04 aporta la comprobación adicional de esa composición en jsdom.
+- **E07 — Gates:** comandos y resultados independientes en la tabla siguiente,
+  ejecutados por Codex durante el re-review del HEAD corregido.
+
+Los suplementos E04/E05 y el JSON E06 siguen disponibles localmente en
+`/private/tmp/s4-f07-b-fix01-review.XtaFyw/`; son artefactos temporales,
+no fixtures versionados ni evidencia de un ambiente remoto. Las pruebas
+versionadas E02/E03/E04 y el spec E06, vinculados al SHA, son las regresiones
+reproducibles del repositorio. No se depende del directorio temporal para
+ejecutar los gates del proyecto. SHA-256 del JSON de Chromium:
+`8a3fe5ab458239c45180865dae15dc2786f001518f25b726dffaa6bda2e52e7d`.
+
+Antes/después verificado de forma independiente: los tres casos `App regression:
+local File survives rejected Back / Cambiar taller / Cerrar sesión` fallaron
+contra una exportación temporal del código de `d3ecbf2` por ausencia del diálogo,
+y pasaron contra `2b58d5a`. El filtro baseline seleccionó tres casos; los doce
+restantes de ese diagnóstico inicial quedaron deselectados, no omitidos en un
+gate obligatorio. La ejecución final E04/E05 fue 25/25. Una primera expectativa
+temporal de revocación contabilizaba también el montaje de prueba de Strict Mode;
+se ajustó el contador del diagnóstico, sin modificar producción ni tests del repo.
+
+| Comando ejecutado en el re-review | Resultado independiente |
+| --- | --- |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS; cero warnings |
+| `npm test -- src/features/reception` | PASS 506/506; 10 archivos |
+| `npm test -- src/shared/media` | PASS 332/332; 10 archivos |
+| `npm test` | PASS 1271/1271; 47 archivos; incluye los 88 casos unitarios añadidos por FIX-01 |
+| `npm run test:e2e:harness` | PASS 191/191; 11 archivos; harness local sintético, incluidos los nuevos casos Chromium y sus controles negativos esperados |
+| `npm run build` | PASS; aviso de chunk >500 kB preexistente, principal actual 640.02 kB |
+| `git diff c61e9eeec281bec667c2b246d022c2795b493275..HEAD --check` | PASS |
+| `git status --short` | Limpio al terminar el re-review; esta auditoría añade únicamente el suplemento documental |
+
+Comando Chromium ejecutado, desde el worktree revisado:
+
+```sh
+HARNESS_OUT_DIR=/private/tmp/s4-f07-b-fix01-review.XtaFyw/chromium HARNESS_SUITE=secure ./node_modules/.bin/playwright test --config e2e-harness-tests/browser/playwright.harness.config.ts --project=harness-desktop e2e-harness-tests/browser/secure/desktop-fix01-navigation.spec.ts
+```
+
+El resultado enfocado 118/118 del apartado FIX-01 pertenece a la ejecución
+reportada por la implementación. El re-review independiente verificó esos casos
+dentro de las suites completas; no se presenta una nueva ejecución enfocada.
+
+### Matriz criterio → prueba → resultado → evidencia → estado
+
+`VERIFICADO F07-B` significa cumplimiento del criterio frontend de esta tarea
+con pruebas ejecutadas y revisión independiente. No equivale a aprobar el gate
+global del sprint. `PENDIENTE F07-C` conserva una obligación de integración real;
+no es PASS ni una exención del documento canónico.
+
+| Criterio de aceptación verificable | Prueba / comprobación | Resultado observado | Evidencia | Estado |
+| --- | --- | --- | --- | --- |
+| Crear una sola recepción: submits simultáneos o posteriores al éxito no repiten POST; no hay media antes de receptionId confirmado | `locks form...forced resubmit cannot create again`; `photo stays the original File across delayed create`; rutas no-media y descarte explícito | Un POST de creación tras éxito; cero sesión/PUT/complete/attach antes de creación; fallos de media no recrean recepción | E01/E02; latch de creación en NewReceptionPage; regresión adicional de submits atómicos del Recovery Review | VERIFICADO F07-B |
+| Conservar el File original y sus datos hasta asociación, con photo/video360, File.type y File.size reales | `photo stays the original File...`; `maps the original walk-around File...`; pruebas F05 de selección | Identidad del mismo File conservada; mapping y tamaño exactos; sin capturedAt derivado de lastModified ni object URL en el DTO | E02/E03 | VERIFICADO F07-B |
+| UUID de idempotencia y sortOrder pertenecen a cada selección y sobreviven al reinicio seguro; máximo dos uploads explícitos | `stable distinct UUIDs and sort orders survive safe restart...max two uploads` | UUID/order estables; selección nueva obtiene identidad nueva; no batch/cola automática; techo dos | E02/E03; garantías de idempotencia frontend, sin certificar deduplicación DB/backend | VERIFICADO F07-B |
+| Usar el PUT firmado emitido y los adaptadores aprobados, sin bearer token al storage ni campos server-owned inventados | F07-A/F01 y orquestación con ejecutor productivo | Target/headers emitidos; credentials omit; mapping aprobado y request allowlists; transporte probado con storage sintético | E01/E02/E03; F07-A/B04 Phase B referenciado arriba | VERIFICADO F07-B; R2 real pendiente |
+| No afirmar evidencia guardada ni liberar el File con PUT 2xx o active solamente; exigir asociación canónica | Active/attach diferidos; identidad/orden de respuesta inválidos; completion no-active/malformado | Guardado/release solo después de attach confirmado; estados ambiguos conservan evidencia y no producen falso éxito | E02/E03 | VERIFICADO F07-B |
+| Recuperar mediante reintento explícito de asociación sin sesión, PUT, complete ni creación adicionales | `association network/server/identity...explicit retry`; controles de doble clic y Retry-After | Repite mismo receptionId/mediaAssetId/sortOrder; no re-upload ni retry automático; Retry-After impide ejecución anticipada | E02; Recovery Review de Retry-After; E07 | VERIFICADO F07-B |
+| Fallo/interrupción de PUT o completion no destruye recepción; éxito parcial y abandono son decisiones explícitas | PUT 403/412/network; completion ambiguo; `partial success...deliberate action`; descarte | Recepción creada conserva su éxito; archivos pendientes visibles; sin reinicio ciego ni borrado de recepción; abandono libera recursos | E02/E03 | VERIFICADO F07-B; caída R2 real pendiente |
+| Corrección mínima del MEDIUM: proteger POP, push/replace y navegación programática, además de enlaces y beforeunload | Matriz ocho estados × cuatro transiciones × aceptación/rechazo; Chromium Back/Forward/programmatic y reload rechazado | Rechazar conserva File/preview/operación y ruta; aceptar sale una vez, aborta/limpia y no repite mutaciones | E01: Data Router/useBlocker/guard; E02/E06; baseline independiente FAIL → PASS; re-review NO FINDINGS | VERIFICADO F07-B; MEDIUM confirmado cerrado |
+| Corrección mínima del MEDIUM: Cambiar taller y Cerrar sesión deben confirmar antes de ejecutar la acción voluntaria | Shell local/PUT/attach; 12 casos acceptance/rejection; composición completa App; dos casos Chromium durante PUT | Rechazo no ejecuta callback ni cambia contexto; aceptación limpia primero y ejecuta una vez; sin doble confirmación | E01: AppShell/coordinador; E02/E04/E06; baseline FAIL → PASS; re-review NO FINDINGS | VERIFICADO F07-B; MEDIUM confirmado cerrado |
+| Router/coordinador conservan ownership, estado y limpieza frente a renders, Strict Mode e intentos concurrentes | App listener disposal; public routes; Strict Mode; siete casos E05; App ordinario/deep links E04 | Router estable con configuración inicial de main.tsx; rutas/layouts conservados; landing sin Clerk; una salida resuelta; sin callback viejo tras rechazo/unmount | E01/E02/E04/E05; re-review NO FINDINGS | VERIFICADO F07-B |
+| Invalidaciones forzadas de sesión/identidad/tenant/permisos limpian inmediatamente, incluso con diálogo; refresh equivalente conserva estado | Invalidation overrides open dialog; blocked history permission loss; equivalent refresh; App forced logout/identity | Requests abortados y previews liberados; callback voluntario no ejecutado; resultado tardío ignorado; File no accesible en nuevo contexto | E02/E03/E04/E06; ReceptionProvider y límites de tasks revisados | VERIFICADO F07-B; no certifica RLS/seguridad backend |
+| Navegar libremente sin pendientes o después de asociar todo; conservar límites de privacidad y memoria local | No pending/all associated; F05 owner/consent/adult/permission; no persistence; signal abort | Sin bloqueo innecesario; elegibilidad preservada; sin nueva firma, IndexedDB, queue u offline replay | E02/E03; E01 | VERIFICADO F07-B |
+| Evidencia mínima: SHA, fecha, ambiente, responsable, casos, resultado, defecto y decisión; fallo corregido seguido de nueva ejecución | Registro de esta sección y contraste de commits/tests/outputs del re-review | Datos explícitos; MEDIUM reproducido → fix → regresiones → re-review; gates verdes reutilizados, sin resultados inventados | E01–E07; esta sección; Notion §2 | COMPLETO DOCUMENTALMENTE |
+| Findings históricos MEDIUM/LOW sin descripción no se pueden declarar corregidos | Comparación de notas históricas y decisiones actualizadas | No se recuperó descripción, ubicación, reproducción ni verdict originales; se conservan como limitación, sin asumir invalidez/cierre | Follow-up verification/FIX-01 y decisión actual | LIMITACIÓN; no bloquea PR de este alcance revisado |
+| R2/CORS, URL de descarga, galería operacional y E2E remoto requieren evidencia propia | Contraste con Notion §7/§21/§22, informe F07 y exclusiones de F07-B | No ejecutados ni declarados PASS por Chromium/harness/jsdom; requisitos concretos pendientes abajo | Notion canónico; Remaining F07-C; E06/E07 delimitados | PENDIENTE F07-C; bloquea cierre global Sprint 4 |
+
+### Pendientes, efecto sobre integración y decisión
+
+No falta evidencia necesaria de implementación, prueba o re-review para los
+criterios frontend de **F07-B** auditados. Faltaba registrar aquí el re-review
+independiente, su SHA/fecha/ambiente/responsable, la matriz y la decisión actual;
+este suplemento cierra únicamente esas omisiones documentales.
+
+Pendientes explícitos de **F07-C**, que no bloquean preparar/revisar el PR
+incremental de F07-B pero sí certificar el flujo operacional remoto y cerrar
+el Quality Gate global de Sprint 4:
+
+| Pendiente | Evidencia exacta que falta |
+| --- | --- |
+| R2/CORS desde browser productivo | Bucket privado y policy para origen frontend exacto; OPTIONS/PUT con headers firmados, subida de fotos/video válidos, expiración/412, interrupción/caída y origen negativo; evidencia sanitizada del entorno real |
+| URL de descarga / playback autorizado | Integración frontend con contrato aprobado, actor/tenant/estado válidos, URL temporal, lectura real, expiración y denegaciones; evidencia remota de lifecycle/RBAC correspondiente |
+| Galería operacional / consulta por recepción u orden | UX productiva y DTOs aprobados, lectura tras nueva visita/recarga, asociación visible, aislamiento y recuperación/reconciliación real; una lista de archivos confirmados en memoria no satisface este criterio |
+| E2E remoto recepción + video + fotos | Entorno provisionado Clerk/backend/PostgreSQL/R2, targets/roles/tenants/fixtures válidos, ejecución browser de create → upload → complete → attach → consulta/download, casos negativos, cleanup y run/reporte sanitizado enlazado; CI/staging/smoke y decisión del gate según corresponda |
+
+La retención, holds, purge/scan y garantías server-authoritative conservan sus
+dependencias/evidencia propias del gate global; esta auditoría no las implementa,
+revalida ni declara aprobadas. No se modifican backend ni contratos compartidos.
+
+Los findings históricos sin descripción requieren recuperar su informe completo
+antes de cualquier afirmación de cierre. No se consideran findings accionables
+reproducidos de este re-review ni se usa su ausencia para afirmar que todos los
+riesgos del sprint están resueltos. La decisión `READY_FOR_PR` tiene alcance
+F07-B, y no equivale al estado canónico `PASSED` ni habilita release/siguiente
+sprint. Los criterios remotos obligatorios siguen pendientes bajo §21/§22.
+
+Entrega documental: únicamente este informe ampliado, preparado para revisión
+y commit separado; HEAD de implementación permanece `2b58d5a`. Sin nuevas
+funcionalidades, repetición de pruebas funcionales, commit, push ni PR.
+
+S4-F07-B GATE AUDIT: READY_FOR_PR
