@@ -1129,3 +1129,7 @@ a.dash-action:hover { background: var(--dash-soft); border-color: var(--dash-blu
 .reception-media p, .reception-media li { overflow-wrap: anywhere; }
 .reception-media-upload { display: grid; gap: var(--tm-space-2); min-width: 0; }
 .reception-media-upload progress { max-width: 100%; }
+
+.reception-evidence-list { padding-inline-start: var(--tm-space-6); }
+.reception-evidence-list > li { margin-block: var(--tm-space-4); }
+.reception-evidence-view { display: block; width: 100%; max-width: 40rem; max-height: 60vh; object-fit: contain; margin-block: var(--tm-space-3); }

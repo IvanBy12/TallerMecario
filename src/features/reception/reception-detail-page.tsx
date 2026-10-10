@@ -8,6 +8,7 @@ import { ReceptionFields } from './reception-fields';
 import { RequestReference } from './request-reference';
 import { useReceptionAction, useReceptionCoordinator } from './use-reception-action';
 import { ReceptionInspection } from './reception-inspection';
+import { ReceptionOperationalGallery } from './reception-operational-gallery';
 import { ReceptionWorkflow } from './reception-workflow';
 export function ReceptionDetailPage() {
     const { receptionId = '' } = useParams();
@@ -95,7 +96,7 @@ function ReceptionDetailContent({ receptionId }: {
                             setRecoveryFailure(null);
                         }
                     }}>Editar recepción</button>}
-        <section aria-label="Evidencia de recepción"><h2>Fotos y video del vehículo</h2><p>La consulta de evidencia fotográfica y de video todavía no está disponible.</p></section>
+        <ReceptionOperationalGallery receptionId={receptionId}/>
         <ReceptionWorkflow reception={reception} onChange={setReception} unavailable={busy || workflowBusy || editing || inspectionEditing || inspectionRecoveryPending || locked} coordinator={coordinator} onEdit={() => {
             if ('customerId' in reception && editable && !inspectionEditing && !inspectionRecoveryPending) { setBaseline(reception); setForm(formOf(reception)); setEditedFields(new Set<IntakeField>()); setEditing(true); setConflicted(false); }
         }}/>
