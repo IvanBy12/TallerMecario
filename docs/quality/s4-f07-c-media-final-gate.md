@@ -389,3 +389,168 @@ independiente nueva ejecutada por esta implementación.
 **Decisión de fixes: pendiente de re-review independiente del commit local.**
 Tras ese review: correcciones si procede → regresión → PR/CI → merge, en ese orden.
 Esta entrega no hace push ni PR y no declara Sprint 4 PASSED.
+
+## Addendum — Auditoría final de aceptación y Quality Gate (S4-F07-C)
+
+Fecha: **2026-10-11, America/Bogota**. Alcance: auditoría documental; no
+modifica producción, tests, contratos ni Notion, y no vuelve a ejecutar suites.
+Commit auditado: `4c0066860ded1a9f8c7a5769f6342d45d9071827` (base
+`98da61425adcdfb43391abfcbc8f0188f8551f9e`; rama `task/s4-f07-c-media-final-gate`).
+Ejecutor de la auditoría: Claude Code (Sonnet 5.5). Implementación original:
+Codex. Ambiente de la evidencia citada: macOS, Node v22.23.3/npm 10.9.9, Vitest/jsdom
+y Playwright Chromium locales con servicios interceptados. **No es un ambiente
+real** (sin Clerk, API desplegada, PostgreSQL ni R2).
+
+Este addendum **no reescribe** las secciones anteriores: su decisión «BLOCKED /
+NOT_READY» sobre el commit `e1d38acd` y el addendum F-1/F-2 permanecen como
+historia. Aquí solo se consolida y se separa el estado incremental del global.
+
+Fuentes consultadas: `AGENTS.md`; este informe; informes F07-A/F07-B enlazados
+arriba; Notion «Quality Gates — Reglas y Pruebas por Sprint» (§1, §2, §7, §21),
+leído por el conector el 2026-10-11 (página `as of 2026-10-06T01:53:14.555Z`,
+`verification.state = unverified`); y el re-review independiente de `4c006686`.
+§7 de Notion coincide con los 24 criterios de la matriz canónica anterior.
+
+### Matriz de aceptación
+
+Estados: **PASS** = evidencia local verificada (no equivale a PASS real del
+criterio global); **BLOCKED** = requiere ambiente/backend real no disponible;
+**NOT_APPLICABLE** = fuera del alcance del ticket frontend.
+
+#### A. Funcionalidad F07-C implementada
+
+| ID | Criterio | Implementación | Prueba | Resultado | Evidencia | Estado |
+| --- | --- | --- | --- | --- | --- | --- |
+| A1 | Listar medios asociados a la recepción, orden y tipos sin reinterpretar | `useOperationalGallery`, `ReceptionOperationalGallery` | `reception-operational-gallery.test.tsx` | Fotos/video/video360 en orden recibido; nulls aceptados; lista malformada rechazada completa | Galería 44/44 | PASS |
+| A2 | Estados loading / vacío / error / cargado + reconsulta manual | Hook y componente | Mismo archivo | Cubiertos con 401/403/404/429 y copy fijo | Galería 44/44 | PASS |
+| A3 | URL temporal solo bajo demanda («Ver»), sin prefetch ni binarios al listar | `useOperationalMediaView.open` | Mismo archivo; Chromium `desktop-operational-gallery.spec.ts` | Una solicitud por apertura; ninguna por ocultar/cancelar | Galería 44/44; Chromium 9/9 | PASS |
+| A4 | Expiración y revocación local de la capacidad | Timer + `focus`/`pageshow`/`visibilitychange`; respuesta vencida no se monta | Mismo archivo; Chromium expiración | Vista retirada al vencer; sin renovación automática | Galería 44/44; Chromium 9/9 | PASS (reloj local) |
+| A5 | Liberación de URL y recurso al ocultar, error o cambio de contexto | Desmontaje img/video; `pause`/`removeAttribute('src')`/`load` | Mismo archivo; F-2 | Verificado en DOM y mocks de `HTMLMediaElement` | Galería 44/44 | PASS |
+| A6 | Autorización UX `media.read` scope tenant; assigned fail-closed | Guard del hook | Mismo archivo | Sin permiso no hay consulta ni controles | Galería 44/44 | PASS (UX; el backend es la autoridad) |
+| A7 | Accesibilidad y foco: botón persistente (F-1) | `GalleryItem` con un único `<button>` | 4 componente + 5 Chromium F-1 | Misma identidad DOM; foco conservado en loading/ready/ocultar/error/expiración/cancelación | Antes 4 + 5 fallan, después pasan (re-review independiente) | PASS |
+| A8 | Aislamiento entre recepciones y tenant en el frontend (F-2) | `key={receptionId}` en `reception-detail-page.tsx` + abort del hook | 3 pruebas de composición real | Vista A retirada, lista/descarga A abortadas, respuesta tardía no aplicada, B usa su `receptionId`/`X-Tenant-Id` | Galería 44/44 | PASS (estado frontend) |
+| A9 | Histórico/cerrado, checklist, daños y orden intactos ante errores de media | Detalle de recepción sin cambios | Pruebas F07-C y regresión F05 | Errores de media no borran el detalle | Recepción 550/550 | PASS |
+
+#### B. Seguridad y regresiones locales
+
+| ID | Criterio | Implementación | Prueba | Resultado | Evidencia | Estado |
+| --- | --- | --- | --- | --- | --- | --- |
+| B1 | URL firmada no persiste (storage, IndexedDB, logs, errores, API requests) | Solo estado React | Galería + scanner del harness | Ausente en todos los canales persistibles | Galería 44/44; harness 191/191 | PASS |
+| B2 | Sin credenciales al storage; `crossOrigin=anonymous`, no-referrer | Atributos de `img`/`video` | Chromium (`storageCredentials=false`, `binaries=0` en error) | Sin Authorization/X-Tenant-Id/cookie hacia storage simulado | Chromium 9/9 | PASS (sintético; CORS real en D) |
+| B3 | Sin firma digital, captura nueva ni persistencia offline | Sin cambios | Regresión F05/F07-A/B | Assertions de ausencia vigentes | Recepción 550/550; media 332/332 | PASS |
+| B4 | Protección de navegación F07-B FIX-01 y flujo upload→complete→attach | Sin cambios | Regresión F07-B | Intacto | Recepción 550/550 | PASS |
+| B5 | Sin cambios backend/contratos/dependencias/adaptador/hook/cliente en F-1/F-2 | Diff `e1d38acd..4c006686` = 4 archivos, 7 líneas productivas | Re-review independiente | Confirmado | Diff + `git diff --check` limpio | PASS |
+| B6 | Calidad estática y build | — | typecheck, lint (0 warnings), build | PASS; warning de chunk >500 kB preexistente | Re-review independiente | PASS |
+
+#### C. Evidencia de navegador con servicios simulados
+
+| ID | Criterio | Prueba | Resultado | Evidencia | Estado |
+| --- | --- | --- | --- | --- | --- |
+| C1 | Recorrido lista → Ver → ocultar → nueva visita, 390 y 1280 px | `desktop-operational-gallery.spec.ts` (4 originales) | Pasan | Chromium 9/9 | PASS (simulado) |
+| C2 | Foco, teclado (click y Enter), error, expiración y cancelación | 5 casos F-1 | Pasan; fallaban antes de la corrección | Chromium 9/9 | PASS (simulado) |
+| C3 | Harness completo sin regresión | `npm run test:e2e:harness` | 191/191; 44 casos Chromium = 41 passed + 3 fallos deliberados exigidos por el control | Re-review independiente | PASS (simulado) |
+
+Estos resultados provienen de respuestas HTTP interceptadas. **No equivalen a E2E
+real de Clerk/API/R2, ni a reproducción real de video, ni a CORS efectivo.**
+
+#### D. Integración real no ejecutada por falta de ambiente
+
+| ID | Criterio (Notion §7 y Fase 3) | Razón | Estado |
+| --- | --- | --- | --- |
+| D1 | HTTPS frontend real con origen autorizado (Clerk/API/R2/CSP) | No provisionado | BLOCKED |
+| D2 | Clerk real y membresías autorizadas (owner/admin/advisor, restringida, tenant B) | Sin credenciales de prueba | BLOCKED |
+| D3 | API operacional alcanzable con B04 Phase B | Sin entorno | BLOCKED |
+| D4 | PostgreSQL con fixtures válidos | Sin entorno | BLOCKED |
+| D5 | Bucket R2 de prueba privado | Sin entorno | BLOCKED |
+| D6 | CORS real: OPTIONS/PUT firmado y GET/Range desde el origen permitido | Sin solicitudes reales | BLOCKED |
+| D7 | Upload real de foto y video360, complete → attach | Sin entorno | BLOCKED |
+| D8 | Nueva consulta con asociación persistida real | Sin entorno | BLOCKED |
+| D9 | URL firmada temporal real y rechazo del storage tras el TTL | Sin entorno | BLOCKED |
+| D10 | Video360 realmente reproducible; R2 caído/interrumpido sin perder recepción | Sin entorno | BLOCKED |
+| D11 | E2E remoto, CI remoto, staging y smoke post-deploy | No ejecutados | BLOCKED |
+| D12 | Validación asistiva con lector de pantalla real | No ejecutada en este entorno | BLOCKED |
+
+**Clock skew** se registra como limitación conocida y **no como prueba
+realizada**: la expiración usa el reloj local para UX; el storage/servidor es la
+autoridad. Una capacidad ya emitida no se revoca instantáneamente al cerrar la UI.
+
+#### E. Criterios globales de Sprint 4 fuera del alcance de este ticket frontend
+
+| §7 | Criterio | Estado | Justificación |
+| --- | --- | --- | --- |
+| 1–8 | Retention/deletion/purge, incompletos 24 h, 12 meses/warranty, 36 meses, legal hold, `deleted_at`, worker, scan R2 | NOT_APPLICABLE al frontend / BLOCKED a nivel Sprint | Backend/worker/storage; no hay evidencia suficiente en este ticket |
+| 9–17 | Upload session, URL temporal, video→R2, fotos, reintento, interrumpido, inválido, metadata, checksum | Regresión local PASS; real BLOCKED | Evidencia real en D |
+| 18–20 | Enlaces por dominio, sin `media_links` polimórfico, A no enlaza B | NOT_APPLICABLE (aplicación en servidor/DB) | Frontend solo emite GET; negativa real pendiente en backend |
+| 21–22 | Descarga expira, R2 caído no destruye recepción | Local PASS; real BLOCKED | D9 y D10 |
+| 23 | Consulta/vista media **por orden** | NOT_APPLICABLE a F07-C (galería por recepción); BLOCKED a nivel Sprint | Requiere contrato/tarea propios; no se declara cubierto |
+| 24 | E2E recepción + video + fotos | BLOCKED | Requiere servicios provisionados |
+
+### Cierre de findings (historia conservada)
+
+| ID | Severidad | Resultado | Cierre |
+| --- | --- | --- | --- |
+| F-1 | MEDIUM | Pérdida de foco a `document.body` al desmontarse «Ver»/«Ocultar» | Corregido con botón persistente de identidad DOM estable. Regresiones antes/después verificadas de forma independiente (4 componente y 5 Chromium fallaban contra `e1d38acd`; pasan en `4c006686`) |
+| F-2 | LOW | Faltaba regresión de cambio de recepción/tenant en la composición real | Tres pruebas de integración añadidas; el comportamiento productivo existente quedó confirmado, sin cambio productivo |
+| LOW `aria-expanded` | LOW | Planteado en el re-review `S4-F07-C RE-REVIEW: FINDINGS` | **Adjudicado NOT_A_FINDING** |
+
+El veredicto textual `S4-F07-C RE-REVIEW: FINDINGS` queda registrado tal cual: el
+único hallazgo de ese re-review fue ese LOW, y su resolución es esta adjudicación
+posterior, no una reescritura del resultado.
+
+Fundamentos de la adjudicación del LOW (según la adjudicación aportada a esta
+auditoría; las referencias W3C no fueron re-verificadas en esta ejecución):
+
+- `aria-expanded={state.kind === 'ready'}` corresponde a la visibilidad real de la
+  evidencia.
+- Durante loading la evidencia aún no está expandida, de modo que `false` es
+  correcto.
+- Cambiar el nombre accesible del botón no viola la regla aplicable a `aria-pressed`.
+- La ausencia de `aria-controls` no fue demostrada como defecto.
+- No hubo modificación productiva.
+- La adjudicación fue **estática**, por inspección y referencias; **no es una nueva
+  ejecución de pruebas** ni validación con lector de pantalla.
+
+### Evidencia técnica consolidada (sin reejecución)
+
+Fuente: re-review independiente sobre `4c006686`, ejecutado el 2026-10-10 sobre una
+copia exportada del commit; el worktree quedó sin modificaciones.
+
+| Gate | Resultado |
+| --- | --- |
+| Galería | 44/44 |
+| `src/features/reception` | 550/550 |
+| `src/shared/media` | 332/332 |
+| Suite completa | 1315/1315 |
+| Harness | 191/191 |
+| Chromium sintético (galería) | 9/9 |
+| typecheck / lint / build | PASS |
+| `git diff e1d38acd..4c006686 --check` | PASS |
+| F-1 contra `e1d38acd` | 4 componente + 5 Chromium fallan (`BODY`) |
+| F-2 sin cambio productivo | Pasan también contra el componente original |
+
+### Registro del Gate (Notion §2)
+
+| Campo | Valor |
+| --- | --- |
+| Fecha | 2026-10-11 (evidencia local 2026-10-10) |
+| Versión/commit | `4c0066860ded1a9f8c7a5769f6342d45d9071827` sobre base `98da614` |
+| Ambiente | Local sintético (Vitest/jsdom, Chromium interceptado); sin staging ni real |
+| Responsable | Implementación Codex; re-review y auditoría Claude Code |
+| Casos ejecutados | Los de la tabla anterior; ningún caso real |
+| PASS/FAIL | Local PASS; real BLOCKED |
+| Defectos | Sin defectos accionables abiertos; F-1 y F-2 cerrados; LOW adjudicado NOT_A_FINDING |
+| Decisión | Ver siguiente sección |
+
+### Decisión
+
+**Estado F07-C incremental: READY_FOR_PR.** El código y su evidencia local
+permiten preparar el PR del alcance incremental; la ausencia de infraestructura
+real **no es un defecto de código**. Pendiente conforme al flujo §22: PR, CI remoto
+y merge. Esta auditoría no hace commit, push ni PR.
+
+**Estado Sprint 4: NOT_READY.** Existen pruebas obligatorias no ejecutadas (§21) y
+criterios backend sin evidencia suficiente (D y E). No se declara READY_FOR_GATE,
+TESTING ni PASSED, y local/sintético no se presenta como éxito real. Sprint 4 solo
+podrá evaluarse tras la ejecución real con evidencia.
+
+`S4-F07-C GATE AUDIT: READY_FOR_PR`
