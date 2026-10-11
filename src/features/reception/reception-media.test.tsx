@@ -1,3 +1,4 @@
+import { createReceptionOperationalMediaApi } from './reception-operational-media-api';
 import { MemoryRouter } from '@/test/data-memory-router';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { StrictMode } from 'react';
@@ -94,7 +95,7 @@ function reusableFixture(executor: UploadExecutor<ReceptionOperationalMediaInput
   const apiClient = createApiClient({ apiOrigin: 'https://api.example.test', getToken: () => Promise.resolve({ kind: 'token', token: 'synthetic' }),
     fetchImpl: () => Promise.resolve(jsonResponse({ privacyNotice: NOTICE })) });
   const controller = new AbortController();
-  const value = { api: createReceptionApi(apiClient, IDS.tenant, controller.signal), permissions, signal: controller.signal, mediaCapability: available(executor) };
+  const value = { operationalMediaApi: createReceptionOperationalMediaApi(apiClient, IDS.tenant, controller.signal), api: createReceptionApi(apiClient, IDS.tenant, controller.signal), permissions, signal: controller.signal, mediaCapability: available(executor) };
   vi.spyOn(context, 'useReception').mockImplementation(() => value);
   const pending = vi.fn();
   let capability: ReceptionMediaCapability = available(executor);
@@ -426,10 +427,10 @@ describe('F05 focused review regressions', () => {
     expect(h.calls.some(call => call.url.pathname.includes('/media/'))).toBe(false);
     expect(screen.queryByLabelText('Firmar recepción')).toBeNull();
   });
-  it('production detail keeps media consultation unavailable after the reception loads', async () => {
+  it('production detail without media.read does not capture/upload or consult media', async () => {
     const create = vi.spyOn(tasks, 'createUploadTask'); const h = renderReception(`/recepciones/${IDS.reception}`, defaults, permissions);
     const evidence = await screen.findByRole('region', { name: 'Evidencia de recepción' });
-    expect(within(evidence).getByText('La consulta de evidencia fotográfica y de video todavía no está disponible.')).toBeDefined();
+    expect(within(evidence).getByText('No tienes permiso para consultar evidencias.')).toBeDefined();
     expect(screen.queryByRole('button', { name: /Mostrar aviso|Subir/ })).toBeNull();
     expect(screen.queryByLabelText('El propietario declara ser mayor de edad para la captura de evidencia.')).toBeNull();
     expect(screen.queryByLabelText('Seleccionar fotos')).toBeNull(); expect(screen.queryByLabelText('Seleccionar video')).toBeNull();

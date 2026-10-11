@@ -13,6 +13,7 @@ export interface ReceptionRuntime {
 }
 interface Value {
     readonly api: ReceptionApi;
+    readonly operationalMediaApi: ReturnType<typeof createReceptionOperationalMediaApi>;
     readonly permissions: EffectivePermissions;
     readonly signal: AbortSignal;
     readonly mediaCapability: ReceptionMediaCapability;
@@ -38,7 +39,7 @@ function ReceptionSession({ runtime, permissions, children }: {
         const controller = new AbortController();
         const signal = controller.signal;
         const media = createReceptionOperationalMediaApi(apiClient, tenantId, signal);
-        setValue({ api: createReceptionApi(apiClient, tenantId, signal), permissions: effectivePermissions, signal,
+        setValue({ operationalMediaApi: media, api: createReceptionApi(apiClient, tenantId, signal), permissions: effectivePermissions, signal,
             mediaCapability: { kind: 'available', executor: createReceptionOperationalMediaExecutor({ client: apiClient, tenantId, signal }), attach: (receptionId, input, local) => media.attach(receptionId, input, local) } });
         return () => { controller.abort(); };
     }, [apiClient, tenantId, effectivePermissions, identity]);
