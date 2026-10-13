@@ -5,10 +5,11 @@ import os from 'node:os';
 import http from 'node:http';
 import { chromium } from '@playwright/test';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { recordS4Media, S4MediaEvidence, type S4Exchange } from '../../e2e/support/s4-media-evidence';
 import { requireS4Preflight, s4PreflightProblems } from '../../e2e/support/s4-preflight';
 import { verifyExpiredDownload } from '../../e2e/support/s4-download-expiry';
+import { checkS4DownloadTimes, s4ExpiryWaitMs } from '../../e2e/support/s4-download-timing';
 import { s4Safe } from '../../e2e/support/s4-safe';
 import { S4_FIXTURE_DIR } from '../../e2e/support/s4-preflight';
 import { syntheticEnv } from '../helpers/synthetic-env';
@@ -22,7 +23,7 @@ const session = '33333333-3333-4333-8333-333333333333';
 const other = '44444444-4444-4444-8444-444444444444';
 const secret = 'S4_SYNTHETIC_SIGNED_CAPABILITY_NEVER_PERSIST';
 const upload = `${R2}/private/object?X-Amz-Signature=${secret}`;
-const download = `${R2}/private/object?X-Amz-Signature=${secret}-download`;
+const download = `${R2}/private/object?X-Amz-Signature=${secret}-download&X-Amz-Date=20261013T120000Z&X-Amz-Expires=300`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-s4-preflight-'));
 afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 function sandbox(overrides: Readonly<Record<string, unknown>> = {}) {
@@ -51,6 +52,12 @@ describe('S4 preflight: BLOCKED is never PASS', () => {
   it('complete sandbox declaration is only a static PASS, not proof of remote services', () => {
     expect(s4PreflightProblems(sandbox())).toEqual([]);
   });
+  it.each(['local', 'development', 'test', ' LOCAL ', ' TEST '])('complete safe sandbox accepts allowed S4 env %s', value => {
+    expect(s4PreflightProblems({ ...sandbox(), VITE_APP_ENV: value })).toEqual([]);
+  });
+  it.each(['production', ' Production ', 'PROD', 'staging', 'unknown'])('complete sandbox cannot permit disallowed S4 env %s', value => {
+    expect(() => { requireS4Preflight({ ...sandbox(), VITE_APP_ENV: value }); }).toThrow('BLOCKED');
+  });
   it.each([{ production: true }, { environment: 'production' }, { postgresqlFixturesValidated: false }, { r2Origin: 'https://other.example.invalid' }])('rejects unsafe/mismatched declaration %j', override => {
     expect(() => { requireS4Preflight(sandbox(override)); }).toThrow('BLOCKED');
   });
@@ -64,7 +71,7 @@ describe('S4 preflight: BLOCKED is never PASS', () => {
 });
 function exchange(method: string, url: string, responseBody: unknown, overrides: Partial<S4Exchange> = {}): S4Exchange {
   return { method, url, status: method === 'POST' ? 201 : 200, requestBody: null, responseBody,
-    requestHeaders: {}, responseHeaders: { 'cache-control': 'no-store', 'access-control-allow-origin': FRONTEND }, ...overrides };
+    requestDurationMs: 0, requestHeaders: {}, responseHeaders: { 'cache-control': 'no-store', 'access-control-allow-origin': FRONTEND }, ...overrides };
 }
 type ChainOverrides = { create?: Partial<S4Exchange>; put?: Partial<S4Exchange>; complete?: Partial<S4Exchange>; attach?: Partial<S4Exchange>; options?: Partial<S4Exchange> };
 function chain(overrides: ChainOverrides = {}) {
@@ -83,7 +90,7 @@ function chain(overrides: ChainOverrides = {}) {
 }
 function read(evidence: S4MediaEvidence, overrides: Partial<S4Exchange> = {}) {
   evidence.observe(exchange('GET', `${API}/api/v1/receptions/${reception}/media`, { media: [{ mediaAssetId: asset }] }));
-  evidence.observe(exchange('GET', `${API}/api/v1/media/${asset}/download-url`, { mediaAssetId: asset, downloadUrl: download, expiresAt: new Date(Date.now() + 290_000).toISOString() }));
+  evidence.observe(exchange('GET', `${API}/api/v1/media/${asset}/download-url`, { mediaAssetId: asset, downloadUrl: download, expiresAt: '2026-10-13T12:05:00.000Z' }));
   evidence.observe(exchange('GET', download, null, { status: 206, requestHeaders: { range: 'bytes=0-' }, ...overrides }));
 }
 describe('S4 correlated HTTP evidence (synthetic, no real integration claim)', () => {
@@ -124,6 +131,38 @@ describe('S4 correlated HTTP evidence (synthetic, no real integration claim)', (
     const evidence = chain(); read(evidence, override);
     expect(() => { evidence.readChain(reception, asset, true); }).toThrow();
   });
+  it.each(['PUT', 'complete', 'attach'] as const)('rejects a duplicate %s request even without a second response', stage => {
+    const evidence = chain();
+    if (stage === 'PUT') evidence.noteRequest('PUT', upload);
+    if (stage === 'complete') evidence.noteRequest('POST', `${API}/api/v1/media/upload-sessions/${session}/complete`);
+    if (stage === 'attach') evidence.noteRequest('POST', `${API}/api/v1/receptions/${reception}/media`, { mediaAssetId: asset });
+    // First request plus a second failed/in-flight request; no duplicate successful response required.
+    if (stage === 'PUT') evidence.noteRequest('PUT', upload);
+    if (stage === 'complete') evidence.noteRequest('POST', `${API}/api/v1/media/upload-sessions/${session}/complete`);
+    if (stage === 'attach') evidence.noteRequest('POST', `${API}/api/v1/receptions/${reception}/media`, { mediaAssetId: asset });
+    expect(() => evidence.uploadChain(reception, 'photo', 20)).toThrow(/duplicad/);
+  });
+  it.each(['PUT', 'complete', 'attach'] as const)('rejects duplicate %s responses without request instrumentation', stage => {
+    const evidence = chain();
+    if (stage === 'PUT') evidence.observe(exchange('PUT', upload, null));
+    if (stage === 'complete') evidence.observe(exchange('POST', `${API}/api/v1/media/upload-sessions/${session}/complete`, {}));
+    if (stage === 'attach') evidence.observe(exchange('POST', `${API}/api/v1/receptions/${reception}/media`, {}, { requestBody: { mediaAssetId: asset } }));
+    expect(() => evidence.uploadChain(reception, 'photo', 20)).toThrow(/duplicad/);
+  });
+  it('OPTIONS and unrelated capacities, sessions, assets and origins are not duplicate PUT/completion/association', () => {
+    const evidence = chain();
+    evidence.noteRequest('OPTIONS', upload);
+    evidence.noteRequest('PUT', `${upload}-another-capability`);
+    evidence.noteRequest('PUT', 'https://unrelated.example.invalid/object');
+    evidence.noteRequest('POST', `${API}/api/v1/media/upload-sessions/${other}/complete`);
+    evidence.noteRequest('POST', `${API}/api/v1/receptions/${reception}/media`, { mediaAssetId: other });
+    expect(evidence.uploadChain(reception, 'photo', 20)).toBe(asset);
+  });
+  it.each([-60_000, 60_000])('stored read evidence remains valid with runner wall-clock skew %d and later evaluation', skew => {
+    const evidence = chain(); read(evidence);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2099-01-01T00:00:00Z') + skew);
+    try { expect(() => { evidence.readChain(reception, asset, true); }).not.toThrow(); } finally { clock.mockRestore(); }
+  });
   it('serialization has only masked routes/status/booleans; never bodies, URLs, query, IDs or credentials', () => {
     const evidence = chain({ put: { requestHeaders: { authorization: secret } } }); read(evidence);
     const json = JSON.stringify(evidence);
@@ -140,24 +179,33 @@ describe('S4 correlated HTTP evidence (synthetic, no real integration claim)', (
 
 // Actual Chromium with two LOCAL synthetic HTTP providers. This proves the collector, not Clerk/API/R2 integration.
 describe('S4 Chromium harness (credential-free)', () => {
-  it('observes native OPTIONS/PUT/GET Range and returns no secret URL; valid fixtures decode and play', async () => {
+  it.each([
+    { browserSkew: 60_000, runnerSkew: -60_000, providerSkew: 30_000, latency: 180, denyExpired: true },
+    { browserSkew: -60_000, runnerSkew: 60_000, providerSkew: -30_000, latency: 180, denyExpired: true },
+    { browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: false },
+  ])('observes native HTTP and effective expiry with controlled clocks/latency %j (synthetic only)', async clocks => {
     let frontendOrigin = '';
     let storageOrigin = '';
     let expiresAt = Infinity;
+    const realNow = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + clocks.runnerSkew);
     const frontend = http.createServer((request, response) => {
       if (request.url?.endsWith('/download-url')) {
-        expiresAt = Date.now() + 150;
+        const signedAt = Math.floor((realNow() + clocks.providerSkew) / 1_000) * 1_000;
+        const signedDate = new Date(signedAt).toISOString().replace(/[-:]/g, '').replace('.000', '');
+        expiresAt = signedAt + 2_000;
         response.setHeader('Content-Type', 'application/json');
-        response.end(JSON.stringify({ mediaAssetId: asset, downloadUrl: `${storageOrigin}/object?signature=${secret}`, expiresAt: new Date(expiresAt).toISOString() }));
+        setTimeout(() => { response.end(JSON.stringify({ mediaAssetId: asset, downloadUrl: `${storageOrigin}/object?signature=${secret}&X-Amz-Date=${signedDate}&X-Amz-Expires=2`, expiresAt: new Date(expiresAt).toISOString() })); }, clocks.latency);
       } else response.end('<html><body>S4 synthetic harness</body></html>');
     });
     const storage = http.createServer((request, response) => {
+      response.setHeader('Date', new Date(realNow() + clocks.providerSkew).toUTCString());
       response.setHeader('Access-Control-Allow-Origin', frontendOrigin);
       response.setHeader('Access-Control-Allow-Methods', 'PUT, GET');
       response.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match, Range');
       if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); }
       else if (request.method === 'PUT') { request.resume(); response.writeHead(200); response.end(); }
-      else if (Date.now() > expiresAt) { response.removeHeader('Access-Control-Allow-Origin'); response.writeHead(403); response.end('Denied'); }
+      else if (clocks.denyExpired && realNow() + clocks.providerSkew > expiresAt) { response.removeHeader('Access-Control-Allow-Origin'); response.writeHead(403); response.end('Denied'); }
       else { response.writeHead(request.headers.range ? 206 : 200, { 'Content-Range': 'bytes 0-2/3' }); response.end('S4!'); }
     });
     const listen = async (server: http.Server) => {
@@ -172,6 +220,7 @@ describe('S4 Chromium harness (credential-free)', () => {
       storageOrigin = await listen(storage);
       const page = await browser.newPage();
       const evidence = await recordS4Media(page, { api: frontendOrigin, frontend: frontendOrigin, storage: storageOrigin });
+      await page.addInitScript(skew => { const nativeNow = Date.now.bind(Date); Date.now = () => nativeNow() + skew; }, clocks.browserSkew);
       await page.goto(frontendOrigin);
       const result = await page.evaluate(async url => {
         const put = await fetch(url, { method: 'PUT', credentials: 'omit', headers: { 'Content-Type': 'image/png', 'If-None-Match': '*' }, body: 'S4!' });
@@ -201,15 +250,30 @@ describe('S4 Chromium harness (credential-free)', () => {
       }, fixtures);
       expect(decoded).toEqual({ imageValid: true, videoValid: true });
       await page.evaluate(() => { Reflect.set(window, 'Clerk', { session: { getToken: () => Promise.resolve('synthetic-token') } }); });
-      expect(await verifyExpiredDownload(page, { apiOrigin: frontendOrigin, storageOrigin, tenantId: reception, assetId: asset }))
-        .toEqual({ initialStatus: 200, expiredStorageStatus: 403, waitedPastExpiry: true });
+      const expiry = verifyExpiredDownload(page, { apiOrigin: frontendOrigin, storageOrigin, tenantId: reception, assetId: asset });
+      if (clocks.denyExpired) await expect(expiry).resolves.toEqual({ initialStatus: 200, expiredStorageStatus: 403, waitedPastExpiry: true });
+      else await expect(expiry).rejects.toThrow('Falta GET real 403');
       await page.evaluate(value => { document.body.innerHTML = `<img alt="${value}" src="https://storage.example.invalid/?secret=${value}">`; }, secret);
       const failure: unknown = await s4Safe(page, 'forced synthetic failure', () => Promise.reject(new Error(secret))).catch((error: unknown) => error);
       expect(failure instanceof Error && !failure.message.includes(secret)).toBe(true);
       expect(page.url()).toBe('about:blank');
     } finally {
+      clock.mockRestore();
       await browser.close();
       for (const server of [frontend, storage]) await new Promise<void>(resolve => { server.close(() => { resolve(); }); });
     }
+  });
+});
+
+
+describe('H-5 temporal assertions never change the actual storage TTL', () => {
+  it('latency is observed independently; signed TTL remains at most 300s and API/firma tolerance is bounded', () => {
+    const signed = Date.parse('2026-10-13T12:00:00Z');
+    for (const latency of [0, 180, 5_000]) expect(() => { checkS4DownloadTimes(signed + 300_000 + 999, signed, 300_000, latency); }).not.toThrow();
+    for (const [expiry, ttl, duration] of [[signed + 300_000, 301_000, 0], [signed + 303_001, 300_000, 180], [signed, 0, 0], [signed + 300_000, 300_000, -1]]) {
+      expect(() => { checkS4DownloadTimes(expiry ?? NaN, signed, ttl ?? NaN, duration ?? NaN); }).toThrow();
+    }
+    expect(s4ExpiryWaitMs(signed + 300_000, signed + 1_000)).toBe(301_000);
+    expect(() => s4ExpiryWaitMs(signed, NaN)).toThrow();
   });
 });

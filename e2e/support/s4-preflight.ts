@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { invalidVariables, missingVariables, type EnvSource } from './env';
+import type { EnvSource } from './env';
 
 export const S4_FIXTURE_DIR = path.resolve('e2e/fixtures/s4');
 export function s4Origins(source: EnvSource = process.env) {
@@ -12,7 +12,24 @@ export function s4Origins(source: EnvSource = process.env) {
 }
 /** Static safety checks; sandbox declaration is operator evidence, never a network/DB PASS. */
 export function s4PreflightProblems(source: EnvSource = process.env): readonly string[] {
-  const problems = [...missingVariables(source), ...invalidVariables(source)];
+  const problems: string[] = [];
+  for (const name of ['VITE_API_BASE_URL', 'VITE_CLERK_PUBLISHABLE_KEY']) {
+    if (!source[name]?.trim()) problems.push(`${name}: ausente`);
+  }
+  if (source['VITE_CLERK_PUBLISHABLE_KEY']?.trim() && !source['VITE_CLERK_PUBLISHABLE_KEY'].startsWith('pk_test_')) {
+    problems.push('VITE_CLERK_PUBLISHABLE_KEY: S4 requiere una clave Clerk de prueba');
+  }
+  const appEnv = source['VITE_APP_ENV']?.trim().toLowerCase();
+  // Absent/blank retains Vite dev's local default; the loaded frontend is verified separately.
+  if (appEnv && !['local', 'development', 'test'].includes(appEnv)) {
+    problems.push('VITE_APP_ENV: producción prohibida; solo local, development o test');
+  }
+  if (source['E2E_S4_INTERACTIVE_LOGIN'] !== undefined && !['0', '1'].includes(source['E2E_S4_INTERACTIVE_LOGIN'])) {
+    problems.push('E2E_S4_INTERACTIVE_LOGIN: debe ser 0 o 1');
+  }
+  if (source['CI'] !== undefined && source['E2E_S4_INTERACTIVE_LOGIN'] === '1') {
+    problems.push('E2E_S4_INTERACTIVE_LOGIN: no permitido en CI');
+  }
   for (const name of ['E2E_S4_SANDBOX_FILE', 'E2E_S4_R2_ORIGIN']) {
     if (!source[name]?.trim()) problems.push(`${name}: ausente`);
   }

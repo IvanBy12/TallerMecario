@@ -1,10 +1,13 @@
+import { s4Check } from './s4-check';
 import { createHash } from 'node:crypto';
 import type { Page, Response } from '@playwright/test';
+import { checkS4DownloadTimes, signedS4DownloadTimes } from './s4-download-timing';
 import { field } from './api-probe';
 import { NetworkEvidence, parseUploadSessionEnvelope, parseActiveMediaEnvelope } from './network-evidence';
 
 export interface S4Exchange {
   readonly method: string; readonly url: string; readonly status: number;
+  readonly requestDurationMs?: number;
   readonly requestBody: unknown; readonly responseBody: unknown;
   readonly requestHeaders: Readonly<Record<string, string>>;
   readonly responseHeaders: Readonly<Record<string, string>>;
@@ -14,12 +17,7 @@ const digest = (url: string) => createHash('sha256').update(url).digest('hex');
 const ok = (status: number) => status >= 200 && status < 300;
 const safeStorage = (headers: Readonly<Record<string, string>>) =>
   !['authorization', 'x-tenant-id', 'cookie'].some(key => headers[key] !== undefined);
-export class S4CheckFailure extends Error {
-  constructor(message: string) { super(message); this.name = 'S4CheckFailure'; }
-}
-export function s4Check(condition: boolean, message: string): asserts condition {
-  if (!condition) throw new S4CheckFailure(message);
-}
+export { S4CheckFailure, s4Check } from './s4-check';
 /** Private in-memory exchanges never reach reporters. Only the existing sanitized entry format is serializable. */
 export class S4MediaEvidence {
   readonly #events: Event[] = [];
@@ -28,6 +26,7 @@ export class S4MediaEvidence {
   #seq = 0;
   #captureFailed = false;
   #downloadRequests = 0;
+  readonly #requests: { method: string; url: string; body: unknown }[] = [];
   constructor(readonly apiOrigin: string, readonly storageOrigin: string, readonly frontendOrigin: string) {
     this.#base = new NetworkEvidence(apiOrigin);
   }
@@ -60,7 +59,7 @@ export class S4MediaEvidence {
     while (this.#pending.size) await Promise.all([...this.#pending]);
     s4Check(!this.#captureFailed, 'No se pudo capturar evidencia S4 completa.');
   }
-  async capture(response: Response): Promise<void> {
+  async capture(response: Response, startedAt: number): Promise<void> {
     const url = new URL(response.url());
     if (![this.apiOrigin, this.storageOrigin].includes(url.origin)) return;
     const seq = ++this.#seq;
@@ -74,10 +73,15 @@ export class S4MediaEvidence {
     }
     if (isApi && mediaRoute && ok(response.status())) responseBody = await response.json().catch(() => null);
     this.observe({ method: request.method(), url: response.url(), status: response.status(), requestBody, responseBody,
+      requestDurationMs: performance.now() - startedAt,
       requestHeaders: await request.allHeaders(), responseHeaders: await response.allHeaders() }, seq);
   }
-  noteRequest(method: string, url: string): void {
+  noteRequest(method: string, url: string, body: unknown = null): void {
     const target = new URL(url);
+    if ((method === 'PUT' && target.origin === this.storageOrigin) || (method === 'POST' && target.origin === this.apiOrigin &&
+      /^\/api\/v1\/(?:media\/upload-sessions(?:\/[0-9a-f-]{36}\/complete)?|receptions\/[0-9a-f-]{36}\/media)$/.test(target.pathname))) {
+      this.#requests.push({ method, url, body });
+    }
     if (method === 'GET' && target.origin === this.apiOrigin && /\/download-url$/.test(target.pathname)) this.#downloadRequests++;
   }
   downloads(): number {
@@ -98,6 +102,9 @@ export class S4MediaEvidence {
     s4Check(session !== null && session.origin === this.storageOrigin && typeof uploadUrl === 'string', 'Upload target S4 inválido.');
     const put = events.find(({ seq, exchange: e }) => seq > created.seq && e.method === 'PUT' && digest(e.url) === digest(uploadUrl) && ok(e.status));
     s4Check(put !== undefined && safeStorage(put.exchange.requestHeaders), 'Falta PUT R2 correcto sin credenciales de API.');
+    const puts = (method: string, url: string) => method === 'PUT' && new URL(url).origin === this.storageOrigin && digest(url) === digest(uploadUrl);
+    s4Check(Math.max(this.#requests.filter(r => puts(r.method, r.url)).length,
+      events.filter(({ exchange: e }) => puts(e.method, e.url)).length) === 1, 'PUT duplicado para la misma capacidad S4.');
     const signed = field(created.exchange.responseBody, 'uploadHeaders');
     s4Check(typeof signed === 'object' && signed !== null && Object.entries(signed).every(([key, value]) =>
       typeof value === 'string' && put.exchange.requestHeaders[key.toLowerCase()] === value), 'PUT no conservó los headers firmados.');
@@ -118,6 +125,15 @@ export class S4MediaEvidence {
       field(e.requestBody, 'mediaAssetId') === session.mediaAssetId && field(e.responseBody, 'media', 'mediaAssetId') === session.mediaAssetId &&
       field(e.responseBody, 'media', 'mediaType') === mediaType && field(e.responseBody, 'media', 'purpose') === 'intake_evidence');
     s4Check(attached !== undefined, 'Falta asociación canónica del mismo asset a la recepción.');
+    const mutation = (method: string, url: string, body: unknown, completion: boolean) => method === 'POST' &&
+      new URL(url).origin === this.apiOrigin && new URL(url).pathname === (completion
+        ? `/api/v1/media/upload-sessions/${session.uploadSessionId}/complete` : `/api/v1/receptions/${receptionId}/media`) &&
+      (completion || field(body, 'mediaAssetId') === session.mediaAssetId);
+    for (const completion of [true, false]) {
+      s4Check(Math.max(this.#requests.filter(r => mutation(r.method, r.url, r.body, completion)).length,
+        events.filter(({ exchange: e }) => mutation(e.method, e.url, e.requestBody, completion)).length) === 1,
+      completion ? 'Completion duplicado de la sesión S4.' : 'Asociación duplicada del asset S4.');
+    }
     s4Check([created, completed, attached].every(({ exchange: e }) => e.responseHeaders['cache-control']?.includes('no-store') === true), 'Falta no-store en mutaciones media.');
     return session.mediaAssetId;
   }
@@ -136,7 +152,9 @@ export class S4MediaEvidence {
     const url = field(download.exchange.responseBody, 'downloadUrl');
     s4Check(typeof url === 'string' && new URL(url).origin === this.storageOrigin, 'Download target S4 inválido.');
     const expiry = field(download.exchange.responseBody, 'expiresAt');
-    s4Check(typeof expiry === 'string' && Date.parse(expiry) > Date.now() && Date.parse(expiry) <= Date.now() + 300_000, 'TTL download fuera del contrato.');
+    s4Check(typeof expiry === 'string' && download.exchange.requestDurationMs !== undefined, 'Falta reloj API/tiempo observado de descarga.');
+    const timing = signedS4DownloadTimes(url);
+    checkS4DownloadTimes(Date.parse(expiry), timing.signedAtMs, timing.ttlMs, download.exchange.requestDurationMs);
     const bytes = this.#events.find(({ seq, exchange: e }) => seq > download.seq && e.method === 'GET' && digest(e.url) === digest(url) && ok(e.status) &&
       (!requireRange || (e.status === 206 && e.requestHeaders['range'] !== undefined)));
     s4Check(bytes !== undefined && safeStorage(bytes.exchange.requestHeaders) &&
@@ -145,8 +163,17 @@ export class S4MediaEvidence {
 }
 export async function recordS4Media(page: Page, origins: { api: string; storage: string; frontend: string }): Promise<S4MediaEvidence> {
   const evidence = new S4MediaEvidence(origins.api, origins.storage, origins.frontend);
-  page.on('request', request => { evidence.noteRequest(request.method(), request.url()); });
-  page.on('response', response => { evidence.track(evidence.capture(response)); });
+  const started = new WeakMap<ReturnType<Response['request']>, number>();
+  page.on('request', request => {
+    started.set(request, performance.now());
+    let body: unknown = null;
+    if (request.method() === 'POST' && new URL(request.url()).origin === origins.api &&
+      /^\/api\/v1\/(?:media\/upload-sessions(?:\/[0-9a-f-]{36}\/complete)?|receptions\/[0-9a-f-]{36}\/media)$/.test(new URL(request.url()).pathname)) {
+      try { body = JSON.parse(request.postData() ?? 'null'); } catch { /* Missing body fails correlation. */ }
+    }
+    evidence.noteRequest(request.method(), request.url(), body);
+  });
+  page.on('response', response => { evidence.track(evidence.capture(response, started.get(response.request()) ?? performance.now())); });
   // Playwright Page response events omit browser-generated OPTIONS; observe them through Chromium CDP only.
   const cdp = await page.context().newCDPSession(page);
   const options = new Map<string, { url: string; headers: Record<string, string> }>();
