@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { Page, Response } from '@playwright/test';
 import { checkS4DownloadTimes, signedS4DownloadTimes } from './s4-download-timing';
 import { field } from './api-probe';
-import { NetworkEvidence, parseUploadSessionEnvelope, parseActiveMediaEnvelope } from './network-evidence';
+import { NetworkEvidence, parseUploadSessionEnvelope, parseActiveMediaEnvelope, evidenceUuidOf, type UploadSessionEnvelope } from './network-evidence';
 
 export interface S4Exchange {
   readonly method: string; readonly url: string; readonly status: number;
@@ -13,7 +13,18 @@ export interface S4Exchange {
   readonly requestHeaders: Readonly<Record<string, string>>;
   readonly responseHeaders: Readonly<Record<string, string>>;
 }
-type Event = { readonly seq: number; readonly exchange: S4Exchange };
+type Event = { readonly seq: number; readonly exchange: S4Exchange; readonly capabilityHash?: string; readonly capabilityOrigin?: string;
+  readonly session?: UploadSessionEnvelope | null; readonly downloadTimes?: { signedAtMs: number; ttlMs: number } };
+const projectedMedia = (value: unknown) => ({ mediaAssetId: evidenceUuidOf(field(value, 'mediaAssetId')),
+  mediaType: ['photo', 'video360'].includes(String(field(value, 'mediaType'))) ? field(value, 'mediaType') : undefined,
+  purpose: field(value, 'purpose') === 'intake_evidence' ? 'intake_evidence' : undefined });
+const projectedRequest = (value: unknown) => ({ mediaAssetId: evidenceUuidOf(field(value, 'mediaAssetId')),
+  mediaType: ['photo', 'video360'].includes(String(field(value, 'mediaType'))) ? field(value, 'mediaType') : undefined,
+  expectedSizeBytes: typeof field(value, 'expectedSizeBytes') === 'number' ? field(value, 'expectedSizeBytes') : undefined,
+  retentionClass: field(value, 'retentionClass') === 'operational' ? 'operational' : undefined,
+  operationalContext: { type: field(value, 'operationalContext', 'type') === 'reception' ? 'reception' : undefined,
+    receptionId: evidenceUuidOf(field(value, 'operationalContext', 'receptionId')) } });
+
 const digest = (url: string) => createHash('sha256').update(url).digest('hex');
 const ok = (status: number) => status >= 200 && status < 300;
 const safeStorage = (headers: Readonly<Record<string, string>>) =>
@@ -27,7 +38,7 @@ export class S4MediaEvidence {
   #seq = 0;
   #captureFailed = false;
   #downloadRequests = 0;
-  readonly #requests: { seq: number; method: string; url: string; body: unknown }[] = [];
+  readonly #requests: { seq: number; method: string; url: string; body: unknown; capabilityHash?: string }[] = [];
   #requestSeq = 0;
   #operation: { receptionId: string; requestSeq: number; responseSeq: number } | undefined;
   constructor(readonly apiOrigin: string, readonly storageOrigin: string, readonly frontendOrigin: string) {
@@ -40,17 +51,38 @@ export class S4MediaEvidence {
     ).map(([key, value]) => [key, ['authorization', 'x-tenant-id', 'cookie'].includes(key) ? '(present)' : value]));
     const responseHeaders = Object.fromEntries(Object.entries(exchange.responseHeaders).filter(([key]) =>
       ['cache-control', 'access-control-allow-origin', 'access-control-allow-methods', 'access-control-allow-headers'].includes(key)));
-    const sanitized = { ...exchange, requestHeaders, responseHeaders };
-    this.#events.push({ seq, exchange: sanitized });
-    this.#events.sort((a, b) => a.seq - b.seq);
     const url = new URL(exchange.url);
+    const uploadUrl = field(exchange.responseBody, 'uploadUrl');
+    const downloadUrl = field(exchange.responseBody, 'downloadUrl');
+    const capability = url.origin === this.storageOrigin ? exchange.url : typeof uploadUrl === 'string' ? uploadUrl :
+      typeof downloadUrl === 'string' ? downloadUrl : undefined;
+    let capabilityOrigin: string | undefined;
+    if (capability !== undefined) { try { capabilityOrigin = new URL(capability).origin; } catch { /* Invalid target fails correlation. */ } }
+    const parsed = parseUploadSessionEnvelope(exchange.responseBody);
+    const session = parsed && { ...parsed, pathname: `/__s4_object__/${digest(parsed.pathname)}` };
+    const signed = field(exchange.responseBody, 'uploadHeaders');
+    const signedHashes = typeof signed === 'object' && signed !== null ? Object.fromEntries(Object.entries(signed)
+      .map(([key, value]) => [key, typeof value === 'string' ? digest(value) : null])) : undefined;
+    let downloadTimes: { signedAtMs: number; ttlMs: number } | undefined;
+    if (typeof downloadUrl === 'string') { try { downloadTimes = signedS4DownloadTimes(downloadUrl); } catch { /* Invalid timing fails readChain. */ } }
+    const list = field(exchange.responseBody, 'media');
+    const responseBody = { ...projectedMedia(exchange.responseBody), status: ['pending', 'active'].includes(String(field(exchange.responseBody, 'status'))) ? field(exchange.responseBody, 'status') : undefined,
+      sizeBytes: typeof field(exchange.responseBody, 'sizeBytes') === 'number' ? field(exchange.responseBody, 'sizeBytes') : undefined,
+      expiresAt: typeof field(exchange.responseBody, 'expiresAt') === 'string' && Number.isFinite(Date.parse(String(field(exchange.responseBody, 'expiresAt')))) ? field(exchange.responseBody, 'expiresAt') : undefined,
+      uploadHeaders: signedHashes, media: Array.isArray(list) ? list.map(projectedMedia) : projectedMedia(list) };
+    const sanitized = { ...exchange, url: this.#storedUrl(url), requestBody: projectedRequest(exchange.requestBody), responseBody, requestHeaders, responseHeaders };
+    this.#events.push({ seq, exchange: sanitized, session, downloadTimes, capabilityOrigin, capabilityHash: capability === undefined ? undefined : digest(capability) });
+    this.#events.sort((a, b) => a.seq - b.seq);
     // Existing sanitizer, bodies deliberately excluded: no hostile body strings can become facts.
-    if (url.origin === this.apiOrigin && /^\/api\/v1\/(?:receptions(?:\/[0-9a-f-]{36}\/media)?|media\/upload-sessions(?:\/[0-9a-f-]{36}\/complete)?|media\/[0-9a-f-]{36}\/download-url)$/.test(url.pathname)) {
+    if (url.origin === this.apiOrigin && /^\/api\/v1\/(?:receptions(?:\/[0-9a-f-]{36}\/media)?|media\/upload-sessions(?:\/[^/]+\/complete)?|media\/[0-9a-f-]{36}\/download-url)$/.test(url.pathname)) {
       this.#base.observe({ ...exchange, requestBody: null, responseBody: null }, seq);
     } else if (url.origin === this.storageOrigin) {
       this.#base.entries.push({ seq, kind: 'object-storage', method: exchange.method,
         route: '(R2; URL omitida)', status: exchange.status, facts: { credentialsAbsent: safeStorage(exchange.requestHeaders) } });
     }
+  }
+  #storedUrl(url: URL): string {
+    return url.origin + (url.origin === this.storageOrigin ? `/__s4_object__/${digest(url.pathname)}` : url.pathname);
   }
   toJSON() { return [...this.#base.entries].sort((a, b) => a.seq - b.seq); }
   track(capture: Promise<void>): void {
@@ -67,7 +99,7 @@ export class S4MediaEvidence {
     if (![this.apiOrigin, this.storageOrigin].includes(url.origin)) return;
     const seq = ++this.#seq;
     const request = response.request();
-    const mediaRoute = /^\/api\/v1\/(?:media\/|receptions\/[0-9a-f-]{36}\/media$)/.test(url.pathname);
+    const mediaRoute = /^\/api\/v1\/(?:media\/|receptions\/[^/]+\/media$)/.test(url.pathname);
     const isApi = url.origin === this.apiOrigin;
     let requestBody: unknown = null;
     let responseBody: unknown = null;
@@ -83,8 +115,9 @@ export class S4MediaEvidence {
     const seq = ++this.#requestSeq;
     const target = new URL(url);
     if ((method === 'PUT' && target.origin === this.storageOrigin) || (method === 'POST' && target.origin === this.apiOrigin &&
-      /^\/api\/v1\/(?:media\/upload-sessions(?:\/[0-9a-f-]{36}\/complete)?|receptions\/[0-9a-f-]{36}\/media)$/.test(target.pathname))) {
-      this.#requests.push({ seq, method, url, body });
+      /^\/api\/v1\/(?:media\/upload-sessions(?:\/[^/]+\/complete)?|receptions\/[^/]+\/media)$/.test(target.pathname))) {
+      this.#requests.push({ seq, method, url: this.#storedUrl(target), body: projectedRequest(body),
+        capabilityHash: target.origin === this.storageOrigin ? digest(url) : undefined });
     }
     if (method === 'GET' && target.origin === this.apiOrigin && /\/download-url$/.test(target.pathname)) this.#downloadRequests++;
     return seq;
@@ -98,43 +131,43 @@ export class S4MediaEvidence {
     s4Check(this.#operation === undefined, 'La operación de upload S4 ya fue iniciada.');
     this.#operation = { receptionId, requestSeq: this.#requestSeq, responseSeq: this.#seq };
   }
-  #operationEvents(receptionId: string): Event[] {
+  #operationEvents(): Event[] {
     const operation = this.#operation;
-    if (!operation || operation.receptionId !== receptionId) return this.#events;
+    if (!operation) return this.#events;
     return this.#events.filter(({ seq, exchange }) => exchange.requestSeq === undefined
       ? seq > operation.responseSeq : exchange.requestSeq > operation.requestSeq);
   }
-  #operationRequests(receptionId: string) {
+  #operationRequests() {
     const operation = this.#operation;
-    return operation?.receptionId === receptionId ? this.#requests.filter(r => r.seq > operation.requestSeq) : this.#requests;
+    return operation ? this.#requests.filter(r => r.seq > operation.requestSeq) : this.#requests;
   }
   assertUploadOperation(files: readonly { mediaType: 'photo' | 'video360'; sizeBytes: number }[]): void {
     const operation = this.#operation;
     s4Check(operation !== undefined && files.length === 2 && files.some(file => file.mediaType === 'photo') &&
       files.some(file => file.mediaType === 'video360'), 'Falta operación S4 PNG/MP4 delimitada.');
-    const events = this.#operationEvents(operation.receptionId);
-    const requests = this.#operationRequests(operation.receptionId);
-    const create = (method: string, url: string, body: unknown) => method === 'POST' && new URL(url).origin === this.apiOrigin &&
-      new URL(url).pathname === '/api/v1/media/upload-sessions' && field(body, 'operationalContext', 'type') === 'reception' &&
-      field(body, 'operationalContext', 'receptionId') === operation.receptionId;
-    s4Check(Math.max(requests.filter(r => create(r.method, r.url, r.body)).length,
-      events.filter(({ exchange: e }) => create(e.method, e.url, e.requestBody)).length) === 2,
+    const events = this.#operationEvents();
+    const requests = this.#operationRequests();
+    const create = (method: string, url: string) => method === 'POST' && new URL(url).origin === this.apiOrigin &&
+      new URL(url).pathname === '/api/v1/media/upload-sessions';
+    s4Check(Math.max(requests.filter(r => create(r.method, r.url)).length,
+      events.filter(({ exchange: e }) => create(e.method, e.url)).length) === 2,
       'La operación S4 debe emitir exactamente 2 POST de upload sessions.');
-    // Known capabilities of other receptions are excluded; unknown PUTs inside this operation fail closed.
-    const foreignCapabilities = new Set(this.#events.filter(({ exchange: e }) => e.method === 'POST' &&
-      new URL(e.url).origin === this.apiOrigin && new URL(e.url).pathname === '/api/v1/media/upload-sessions' &&
-      field(e.requestBody, 'operationalContext', 'type') === 'reception' &&
-      typeof field(e.requestBody, 'operationalContext', 'receptionId') === 'string' &&
-      field(e.requestBody, 'operationalContext', 'receptionId') !== operation.receptionId)
-      .map(({ exchange }) => field(exchange.responseBody, 'uploadUrl')).filter((url): url is string => typeof url === 'string').map(digest));
-    const put = (method: string, url: string) => method === 'PUT' && new URL(url).origin === this.storageOrigin && !foreignCapabilities.has(digest(url));
+    const put = (method: string, url: string) => method === 'PUT' && new URL(url).origin === this.storageOrigin;
     s4Check(Math.max(requests.filter(r => put(r.method, r.url)).length,
       events.filter(({ exchange: e }) => put(e.method, e.url)).length) === 2, 'La operación S4 debe emitir exactamente 2 PUT a R2.');
+    // All relevant mutations after the checkpoint count, regardless of IDs or reception context.
+    for (const completion of [true, false]) {
+      const mutation = (method: string, url: string) => method === 'POST' && new URL(url).origin === this.apiOrigin &&
+        (completion ? /^\/api\/v1\/media\/upload-sessions\/[^/]+\/complete$/ : /^\/api\/v1\/receptions\/[^/]+\/media$/).test(new URL(url).pathname);
+      s4Check(Math.max(requests.filter(r => mutation(r.method, r.url)).length,
+        events.filter(({ exchange: e }) => mutation(e.method, e.url)).length) === 2,
+      completion ? 'La operación S4 debe emitir exactamente 2 completion.' : 'La operación S4 debe emitir exactamente 2 asociaciones.');
+    }
     for (const file of files) this.uploadChain(operation.receptionId, file.mediaType, file.sizeBytes);
   }
   uploadChain(receptionId: string, mediaType: 'photo' | 'video360', sizeBytes: number): string {
-    const events = this.#operationEvents(receptionId);
-    const requests = this.#operationRequests(receptionId);
+    const events = this.#operationEvents();
+    const requests = this.#operationRequests();
     const created = events.find(({ exchange: e }) => e.method === 'POST' && new URL(e.url).origin === this.apiOrigin &&
       new URL(e.url).pathname === '/api/v1/media/upload-sessions' && e.status === 201 &&
       field(e.requestBody, 'mediaType') === mediaType && field(e.requestBody, 'retentionClass') === 'operational' &&
@@ -142,17 +175,17 @@ export class S4MediaEvidence {
       field(e.requestBody, 'operationalContext', 'type') === 'reception' &&
       field(e.requestBody, 'operationalContext', 'receptionId') === receptionId);
     s4Check(created !== undefined, 'Falta create contextual real S4.');
-    const session = parseUploadSessionEnvelope(created.exchange.responseBody);
-    const uploadUrl = field(created.exchange.responseBody, 'uploadUrl');
-    s4Check(session !== null && session.origin === this.storageOrigin && typeof uploadUrl === 'string', 'Upload target S4 inválido.');
-    const put = events.find(({ seq, exchange: e }) => seq > created.seq && e.method === 'PUT' && digest(e.url) === digest(uploadUrl) && ok(e.status));
+    const session = created.session;
+    const capabilityHash = created.capabilityHash;
+    s4Check(session != null && session.origin === this.storageOrigin && capabilityHash !== undefined, 'Upload target S4 inválido.');
+    const put = events.find(({ seq, exchange: e, capabilityHash: hash }) => seq > created.seq && e.method === 'PUT' && hash === capabilityHash && ok(e.status));
     s4Check(put !== undefined && safeStorage(put.exchange.requestHeaders), 'Falta PUT R2 correcto sin credenciales de API.');
-    const puts = (method: string, url: string) => method === 'PUT' && new URL(url).origin === this.storageOrigin && digest(url) === digest(uploadUrl);
-    s4Check(Math.max(requests.filter(r => puts(r.method, r.url)).length,
-      events.filter(({ exchange: e }) => puts(e.method, e.url)).length) === 1, 'PUT duplicado para la misma capacidad S4.');
+    const puts = (method: string, url: string, hash?: string) => method === 'PUT' && new URL(url).origin === this.storageOrigin && hash === capabilityHash;
+    s4Check(Math.max(requests.filter(r => puts(r.method, r.url, r.capabilityHash)).length,
+      events.filter(({ exchange: e, capabilityHash: hash }) => puts(e.method, e.url, hash)).length) === 1, 'PUT duplicado para la misma capacidad S4.');
     const signed = field(created.exchange.responseBody, 'uploadHeaders');
     s4Check(typeof signed === 'object' && signed !== null && Object.entries(signed).every(([key, value]) =>
-      typeof value === 'string' && put.exchange.requestHeaders[key.toLowerCase()] === value), 'PUT no conservó los headers firmados.');
+      typeof value === 'string' && digest(put.exchange.requestHeaders[key.toLowerCase()] ?? '') === value), 'PUT no conservó los headers firmados.');
     const preflight = events.find(({ exchange: e }) => e.method === 'OPTIONS' && new URL(e.url).origin === session.origin &&
       new URL(e.url).pathname === session.pathname && ok(e.status) &&
       e.requestHeaders['access-control-request-method'] === 'PUT' && e.responseHeaders['access-control-allow-origin'] === this.frontendOrigin &&
@@ -194,13 +227,13 @@ export class S4MediaEvidence {
     const download = this.#events.find(({ seq, exchange: e }) => seq > listed.seq && e.method === 'GET' && e.status === 200 &&
       new URL(e.url).origin === this.apiOrigin && new URL(e.url).pathname === `/api/v1/media/${assetId}/download-url` && field(e.responseBody, 'mediaAssetId') === assetId);
     s4Check(download !== undefined && download.exchange.responseHeaders['cache-control']?.includes('no-store') === true, 'Falta descarga bajo demanda autorizada y no-store.');
-    const url = field(download.exchange.responseBody, 'downloadUrl');
-    s4Check(typeof url === 'string' && new URL(url).origin === this.storageOrigin, 'Download target S4 inválido.');
+    const capabilityHash = download.capabilityHash;
+    s4Check(capabilityHash !== undefined && download.capabilityOrigin === this.storageOrigin && download.downloadTimes !== undefined, 'Download target S4 inválido.');
     const expiry = field(download.exchange.responseBody, 'expiresAt');
     s4Check(typeof expiry === 'string' && download.exchange.requestDurationMs !== undefined, 'Falta reloj API/tiempo observado de descarga.');
-    const timing = signedS4DownloadTimes(url);
+    const timing = download.downloadTimes;
     checkS4DownloadTimes(Date.parse(expiry), timing.signedAtMs, timing.ttlMs, download.exchange.requestDurationMs);
-    const bytes = this.#events.find(({ seq, exchange: e }) => seq > download.seq && e.method === 'GET' && digest(e.url) === digest(url) && ok(e.status) &&
+    const bytes = this.#events.find(({ seq, exchange: e, capabilityHash: hash }) => seq > download.seq && e.method === 'GET' && hash === capabilityHash && ok(e.status) &&
       (!requireRange || (e.status === 206 && e.requestHeaders['range'] !== undefined)));
     s4Check(bytes !== undefined && safeStorage(bytes.exchange.requestHeaders) &&
       bytes.exchange.responseHeaders['access-control-allow-origin'] === this.frontendOrigin, 'Falta GET/CORS R2 sin credenciales o Range 206 de video.');
@@ -213,7 +246,7 @@ export async function recordS4Media(page: Page, origins: { api: string; storage:
     const time = performance.now();
     let body: unknown = null;
     if (request.method() === 'POST' && new URL(request.url()).origin === origins.api &&
-      /^\/api\/v1\/(?:media\/upload-sessions(?:\/[0-9a-f-]{36}\/complete)?|receptions\/[0-9a-f-]{36}\/media)$/.test(new URL(request.url()).pathname)) {
+      /^\/api\/v1\/(?:media\/upload-sessions(?:\/[^/]+\/complete)?|receptions\/[^/]+\/media)$/.test(new URL(request.url()).pathname)) {
       try { body = JSON.parse(request.postData() ?? 'null'); } catch { /* Missing body fails correlation. */ }
     }
     const seq = evidence.noteRequest(request.method(), request.url(), body);
@@ -228,7 +261,9 @@ export async function recordS4Media(page: Page, origins: { api: string; storage:
   const options = new Map<string, { url: string; headers: Record<string, string> }>();
   cdp.on('Network.requestWillBeSent', event => {
     if (event.request.method === 'OPTIONS' && new URL(event.request.url).origin === origins.storage) {
-      options.set(event.requestId, { url: event.request.url, headers: Object.fromEntries(Object.entries(event.request.headers).map(([key, value]) => [key.toLowerCase(), value])) });
+      const target = new URL(event.request.url);
+      options.set(event.requestId, { url: target.origin + target.pathname, headers: Object.fromEntries(Object.entries(event.request.headers)
+        .map(([key, value]): [string, string] => [key.toLowerCase(), typeof value === 'string' ? value : '(invalid)']).filter(([key]) => key === 'access-control-request-method' || key === 'access-control-request-headers')) });
     }
   });
   cdp.on('Network.responseReceived', event => {

@@ -11,6 +11,9 @@ export function classifyS4Failure(error: unknown): 'FAIL' | 'BLOCKED' {
   if (!(error instanceof S4CheckFailure)) return 'FAIL';
   return error.classification ?? (error.message.startsWith('S4 BLOCKED:') ? 'BLOCKED' : 'FAIL');
 }
+export function s4RunFailure(label: string, error: unknown): Error {
+  return new S4RunFailure(label, error instanceof S4CheckFailure ? ` ${error.message}` : '', classifyS4Failure(error));
+}
 export async function clearS4Page(page: Page): Promise<void> {
   await page.goto('about:blank', { timeout: 3_000 }).catch(async () => { await page.context().close().catch(() => undefined); });
 }
@@ -19,7 +22,6 @@ export async function s4Safe(page: Page, label: string, run: () => Promise<void>
   try { await run(); }
   catch (error) {
     await clearS4Page(page);
-    throw new S4RunFailure(label, error instanceof S4CheckFailure ? ` ${error.message}` : '',
-      classifyS4Failure(error));
+    throw s4RunFailure(label, error);
   }
 }

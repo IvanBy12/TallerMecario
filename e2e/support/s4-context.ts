@@ -65,16 +65,35 @@ export async function resolveS4Context(page: Page, phase: S4ContextPhase = 'prec
   }
   unavailableContext(phase, 'ninguna membership concede los permisos tenant requeridos.');
 }
-/** Let the product select the same verified context, including accounts with multiple memberships. */
-export async function openS4App(page: Page, destination = '/panel'): Promise<WorkshopContext> {
-  await verifyS4Frontend(page.request);
-  await page.goto(destination);
-  s4Check(new URL(page.url()).origin === s4Origins().frontend, 'S4 BLOCKED: navegación a un frontend distinto del aprobado.');
+/** Unexpected Clerk loading faults are functional failures, not a missing test identity. */
+export async function waitForS4Clerk(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const clerk = Reflect.get(window, 'Clerk') as { loaded?: boolean } | undefined;
     return clerk?.loaded === true;
-  });
-  const context = await resolveS4Context(page, 'scenario');
+  }, undefined, { timeout: 30_000 }).catch(() => { throw new S4CheckFailure('Clerk no se pudo cargar correctamente.', 'FAIL'); });
+}
+/** Cold start is a precondition until live context and the UI have both been confirmed. */
+export class S4ScenarioSession {
+  #phase: S4ContextPhase = 'precondition';
+  #context: WorkshopContext | undefined;
+  get phase(): S4ContextPhase { return this.#phase; }
+  async open(page: Page, destination = '/panel'): Promise<WorkshopContext> {
+    const context = await openS4App(page, destination, this.#phase);
+    const previous = this.#context;
+    s4Check(previous === undefined || (context.userId === previous.userId && context.tenantId === previous.tenantId &&
+      context.membershipId === previous.membershipId), 'La identidad/taller S4 cambió durante la corrida.', 'FAIL');
+    this.#context = context;
+    this.#phase = 'scenario';
+    return context;
+  }
+}
+/** Let the product select the same verified context, including accounts with multiple memberships. */
+export async function openS4App(page: Page, destination = '/panel', phase: S4ContextPhase = 'scenario'): Promise<WorkshopContext> {
+  await verifyS4Frontend(page.request);
+  await page.goto(destination);
+  s4Check(new URL(page.url()).origin === s4Origins().frontend, 'S4 BLOCKED: navegación a un frontend distinto del aprobado.');
+  await waitForS4Clerk(page);
+  const context = await resolveS4Context(page, phase);
   const shell = page.locator('main#contenido-principal');
   const selection = page.getByRole('heading', { name: 'Selecciona un taller', exact: true });
   await shell.or(selection).first().waitFor();

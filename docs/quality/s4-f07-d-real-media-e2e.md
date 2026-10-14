@@ -326,3 +326,84 @@ Archivos del diff residual: `e2e/support/s4-check.ts`, `e2e/support/s4-safe.ts`,
 S4 REAL E2E: BLOCKED
 
 S4-F07-D RESIDUAL FIXES: READY_FOR_RE_REVIEW
+
+
+## Corrección final R-1 / R-2 — 2026-10-13, America/Bogota
+
+Base de esta entrega: `3480bc4c93fe94251c6ea699f5064c6a9588ba68`; rama/worktree S4-F07-D existentes. Un único commit local adicional, sin amend/push/PR. El historial anterior permanece íntegro como prefijo del informe; las conclusiones de cada revisión conservan su fecha y alcance.
+
+Adjudicación recibida del re-review independiente: H-1–H-6 y N-1/N-2 corregidos en sus objetivos principales; nuevos residuos R-1/R-2 LOW; producto 1315/1315, harness 305/305; E2E real no ejecutado. La decisión independiente final sigue pendiente.
+
+### R-1: exclusiones ocultaban operaciones posteriores al checkpoint
+
+**Causa:** el total de creates filtraba `receptionId` y `foreignCapabilities` excluía PUT de otras recepciones, aunque ambos comenzaran durante S4-01.
+
+**Corrección:** desde `beginUploadOperation`, se cuentan todos los POST upload-session en el API y todos los PUT al origen R2 autorizado, sin filtros de recepción/asset/capacidad. Totales exactos: dos creates, dos PUT, dos completion y dos asociaciones. A esos totales se suman las correlaciones existentes: un PUT exitoso y headers firmados exactos por capacidad esperada, un complete active por sesión/asset/tamaño y una asociación a la recepción esperada por asset. Una operación extra con ID nuevo o contexto distinto falla. Las rutas de complete/attach no excluyen IDs inesperados, malformados o con mayúsculas.
+
+La única exclusión temporal conserva solicitudes **iniciadas antes del checkpoint** mediante `requestSeq`, incluso si su respuesta se recibe después. OPTIONS no es PUT; otros métodos/orígenes/rutas ajenos al contrato no son operaciones relevantes. Los hashes de capacidades y rutas de objeto sustituyen las URLs firmadas en la memoria del collector; se proyectan los DTOs necesarios y se hashean los valores de headers firmados. Los datos firmados se leen transitoriamente para parsear/correlacionar, pero no se retienen en arrays/maps ni se publican. CDP OPTIONS conserva únicamente origen/path sin query y los headers técnicos necesarios. La validación de origen/tiempos de descarga permanece explícita; no cambia TTL ni expiración S4-06.
+
+**Regresiones:** dos archivos correctos; tercera sesión propia/ajena, con y sin PUT; tercer PUT con capacidad nueva o de otra recepción; PUT posterior de capacidad ajena emitida antes del checkpoint; complete/attach extra con IDs distintos; IDs malformados/mayúsculas; correlación errónea; solicitudes anteriores con respuestas tardías; OPTIONS; reporte sanitizado. Se actualiza la antigua prueba N-2 que aceptaba tráfico ajeno posterior, conservando su comprobación de requests anteriores. Fixtures compartidos solo dentro del harness.
+
+**Mutaciones:** seis variantes temporales fuera del repositorio relajan totales create/PUT/complete/attach o restauran filtros de recepción/PUT ajeno. El control exige que la implementación actual rechace cada negativo y que el mutante lo acepte (fallaría la regresión), además de exigir que el happy path continúe válido en cada mutante. Se detectan 6/6 mutaciones; no son pruebas contra servicios reales.
+
+### R-2: cold start sin setup se clasificaba como revocación
+
+**Causa:** `openS4App` usaba fase activa desde el primer `beforeEach`, y la fixture Page podía fallar leyendo un estado ausente antes de que el hook lo clasificara.
+
+**Corrección:** `S4ScenarioSession` inicia explícitamente en precondition y solo cambia a scenario después de verificar Clerk, `/me`, `/context`, permisos y selección UI. Conserva identidad/taller/membership para todo el recorrido, incluida la nueva visita dentro de S4-01. La ausencia/expiración inicial es BLOCKED; después de validar, pérdida de sesión/membership/permisos o cambio inesperado de identidad/taller es FAIL. HTTP 503 y contratos inconsistentes son FAIL en ambas fases. No se deduce fase mediante mensajes.
+
+Un `beforeAll` sin Page verifica el archivo canónico antes de que Playwright intente hidratar `storageState`, con setup y `--no-deps`. Falta de archivo, JSON incompatible, archivo/directorio enlazado o directorio inválido producen BLOCKED sanitizado. No certifica una sesión por existencia del archivo: la validación viva del `beforeEach` sigue obligatoria. No se modifica la configuración ni se exigen cuentas/IDs S3.
+
+### Auditoría de casos vecinos
+
+| Punto inspeccionado | Decisión / evidencia |
+| --- | --- |
+| Filtros de creates/PUT/completion/attach posteriores | Sin exclusiones por recepción ni capacidad. Totales y correlación fallan ante extras. |
+| Rutas con IDs distintos/malformados/mayúsculas | Ampliado el reconocimiento de operaciones relevantes para impedir exclusión por patrón UUID; no se cambian endpoints reales. |
+| Correlación de respuesta tardía | Se conserva secuencia del inicio request; prueba positiva con response posterior al checkpoint. |
+| StorageState ausente/incompatible/enlazado antes de Page | Guard previo beforeAll y error público sanitizado; reporter lo verifica con/sin deps. |
+| Directorio de candidates no regular | `s4StateCandidates` lo rechaza como precondición inicial, de forma coherente con el guard de beforeAll. |
+| Clerk.load inesperado y fallo de getToken | Loader compartido conserva 30s, reemplaza errores por FAIL fijo; getter que lanza y token rechazado se prueban en setup y no-deps. No se interpretan como ausencia de identidad. |
+| Sesión/membership/permisos ausentes al inicio | BLOCKED con justificación; phase permanece precondition. |
+| Revocación o identidad/contexto diferente una vez verificado | FAIL; no hay fallback a otra identidad durante el escenario. Prueba también cambio API consistente entre /me y /context. |
+| Bootstrap/context HTTP y DTO inválidos | Clasificación explícita FAIL conservada de N-1. |
+| Health con conectividad conocida | BLOCKED controlado conservado; no se generaliza a cualquier excepción o 503. |
+| Preflight/frontend/orígenes/Clerk Development | Guardas cerradas conservadas. No se alteran H-3/H-4/H-5/H-6 ni S3. |
+| Persistencia/navegación inesperada de setup | Error genérico no se reclasifica automáticamente como identidad ausente; FAIL sanitizado. Checks explícitos de entorno/archivo inseguro mantienen BLOCKED. |
+| Expiración y almacenamiento de capacidades | Hashes en collector; URL efectiva solo en la operación browser existente. Helpers S4-06 y TTL reales intactos. |
+
+Los controles R-2 toman los hooks efectivos de la spec y los ejecutan mediante el CLI/reporter JSON de Playwright contra HTTP/Clerk **sintéticos locales**. Solo se reubican imports y el archivo de estado dentro del directorio temporal; no se interceptan requests del runner real. Configuración de proyecto con dependencia setup o `--no-deps`, storageState real de Playwright, trace/screenshot/video off. Positiva de sesión inicial válida; negativas de archivo ausente/vencido/incompatible/enlazado, autenticación inicial incompleta, revocación durante S4-01, membership/tenant/permisos distintos, cambio de identidad consistente en API, 503, health inaccesible, getter Clerk que lanza y token que rechaza. El reporter debe dar FAIL/BLOCKED correcto y ningún escenario negativo puede terminar passed. No equivalen a una corrida multimedia real.
+
+### Intermitencia preexistente de galería — riesgo separado
+
+- **Main `9052f26`:** reproducción confirmada por el re-review independiente y comunicada en la solicitud R-1/R-2. No se inventan logs ni cantidades no proporcionadas por ese revisor. Control adicional ejecutado en esta sesión sobre `9052f263daaf233508ba5625e86b42c96cefd6bd`: `npm test` PASS 1315/1315, 48 archivos; este intento no reprodujo el fallo y no invalida la observación intermitente previa.
+- **Rama:** evidencia N-1/N-2 conservada arriba: primera corrida con timeout HTTP403, 1314/1315; galería aislada 44/44 y repetición 1315/1315. En esta entrega R-1/R-2, la primera corrida volvió a fallar: `rejects already expired URL and only reacquires upon another user action`, espera de `/El acceso temporal expiró/`, 1314/1315. Galería aislada posterior 44/44; repetición completa 1315/1315.
+- **Producción idéntica:** `git diff 3480bc4 -- src` y comparación `9052f26` ↔ rama para `src/` sin diferencias. No se modifican `src/`, tests de producto, timeouts ni estrategia de ejecución para conseguir PASS.
+- **Causa no demostrada.** Recomendada investigación independiente de la intermitencia de galería; no atribuirla a R-1/R-2 ni asumir resuelta por una repetición exitosa. Se mantienen todas las incidencias y repeticiones, sin convertir la primera corrida en PASS.
+
+### Gates finales y entrega
+
+Gates ejecutados secuencialmente con Node 22.23.3:
+
+| Gate final | Resultado |
+| --- | --- |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS, 0 warnings |
+| `npm test` | Primera corrida 1314/1315 por galería; aislada 44/44; repetición completa PASS 1315/1315, 48 archivos. Incidencia conservada arriba. |
+| `npm run test:e2e:harness` | PASS 356/356, 16 archivos; 51 regresiones nuevas (17 R-1 y 34 controles reporter R-2), incluyendo detección de 6/6 mutaciones. |
+| `npm run build` | PASS; aviso existente de chunk 644.12 kB, sin cambiar límites. |
+| `git diff --check` | PASS |
+| `npm run e2e:s4:list` | PASS: 1 setup + S4-01 a S4-06; cinco habilitados, S4-03 PENDING/expected skipped. |
+| Preflight vacío normal / `--no-deps` | exit 1/BLOCKED en ambos; sin tests iniciados ni variables S3 requeridas. |
+| Producto, S3, H-3/H-4/H-5/H-6, config, scripts, lockfile | Sin diff en archivos excluidos; regresiones históricas conservadas pasan. |
+| Main | HEAD `9052f263daaf233508ba5625e86b42c96cefd6bd`, limpio e intacto. |
+
+La inspección del preflight efectivo confirma cuatro variables ausentes (`VITE_API_BASE_URL`, `VITE_CLERK_PUBLISHABLE_KEY`, `E2E_S4_R2_ORIGIN`, `E2E_S4_SANDBOX_FILE`) y cero estados privados regulares. No se ejecutaron pruebas/probes contra Clerk/API/DB/R2 reales. Pendientes: entorno inyectado, declaración sandbox acreditada, sesión Development autorizada y servicios/CORS reales.
+
+Archivos del commit final: `e2e/support/s4-media-evidence.ts`, `e2e/support/s4-context.ts`, `e2e/support/s4-session.ts`, `e2e/support/s4-safe.ts`, `e2e/s4-media.spec.ts`, `e2e-harness-tests/unit/s4-residual.test.ts`, nuevos `e2e-harness-tests/helpers/s4-upload-fixture.ts` y `e2e-harness-tests/unit/s4-final.test.ts`, y este informe. Único commit local adicional sobre `3480bc4`; SHA y estado Git entregados al cierre. Sin amend, push ni PR.
+
+Cinco escenarios preparados, S4-03 PENDING/skip y jamás PASS, E2E reales BLOCKED/no ejecutados, Sprint 4 NOT_READY. Staging y QA reales pendientes conforme a [Notion Quality Gates §22](https://app.notion.com/p/3df6ab0a330d818486e9dd6f06b5f573) y su snapshot: Code Review → Unit/Integration/E2E → Staging → QA → Quality Gate. Re-review independiente final pendiente; esta entrega no lo sustituye ni habilita el siguiente Sprint.
+
+S4 REAL E2E: BLOCKED
+
+S4-F07-D FINAL FIXES: READY_FOR_RE_REVIEW

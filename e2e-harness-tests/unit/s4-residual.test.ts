@@ -7,9 +7,10 @@ import { createRequire } from 'node:module';
 import { chromium } from '@playwright/test';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { openS4App, resolveS4Context, S4_PERMISSIONS, S4SessionUnavailable } from '../../e2e/support/s4-context';
-import { S4CheckFailure, S4MediaEvidence, type S4Exchange } from '../../e2e/support/s4-media-evidence';
+import { S4CheckFailure, S4MediaEvidence } from '../../e2e/support/s4-media-evidence';
 import { classifyS4Failure, s4Safe } from '../../e2e/support/s4-safe';
 import { requireS4ApiReady } from '../../e2e/support/s4-readiness';
+import { API, R2, FRONTEND, reception, files, create, finish, operation, exchange } from '../helpers/s4-upload-fixture';
 import { requireS4Preflight } from '../../e2e/support/s4-preflight';
 
 const marker = 'SYNTHETIC_TOKEN_OR_HOSTILE_BODY_NOT_FOR_REPORTS';
@@ -184,42 +185,6 @@ describe('N-1: live synthetic HTTP/bootstrap and public sanitized runner classif
   });
 });
 
-const API = 'https://api.example.invalid', R2 = 'https://synthetic.r2.cloudflarestorage.com', FRONTEND = 'http://localhost:5173';
-const reception = id(10);
-const files = [{ mediaType: 'photo', sizeBytes: 20 }, { mediaType: 'video360', sizeBytes: 40 }] as const;
-function exchange(method: string, url: string, requestBody: unknown, responseBody: unknown, status = 200, requestSeq?: number): S4Exchange {
-  return { method, url, requestBody, responseBody, status, requestSeq,
-    requestHeaders: { 'content-type': 'image/png', 'if-none-match': '*', 'access-control-request-method': 'PUT', 'access-control-request-headers': 'content-type,if-none-match' },
-    responseHeaders: { 'cache-control': 'no-store', 'access-control-allow-origin': FRONTEND, 'access-control-allow-methods': 'PUT,GET', 'access-control-allow-headers': 'content-type,if-none-match' } };
-}
-function create(evidence: S4MediaEvidence, n: number, mediaType: 'photo' | 'video360', target = reception) {
-  const body = { mediaType, mimeType: mediaType === 'photo' ? 'image/png' : 'video/mp4', expectedSizeBytes: mediaType === 'photo' ? 20 : 40, retentionClass: 'operational', operationalContext: { type: 'reception', receptionId: target } };
-  const session = id(n), asset = id(n + 100), url = `${R2}/object/${String(n)}?X-Amz-Signature=${marker}-${String(n)}`;
-  const seq = evidence.noteRequest('POST', `${API}/api/v1/media/upload-sessions`, body);
-  evidence.observe(exchange('POST', `${API}/api/v1/media/upload-sessions`, body, { uploadSessionId: session, mediaAssetId: asset, uploadMethod: 'PUT', uploadUrl: url,
-    status: 'pending', objectKey: `object/${String(n)}`, expiresAt: '2099-01-01T00:00:00Z', uploadHeaders: { 'Content-Type': mediaType === 'photo' ? 'image/png' : 'video/mp4', 'If-None-Match': '*' } }, 201, seq));
-  return { session, asset, url };
-}
-function finish(evidence: S4MediaEvidence, chain: ReturnType<typeof create>, mediaType: 'photo' | 'video360', target = reception, omitPut = false) {
-  evidence.observe(exchange('OPTIONS', chain.url, null, null, 204));
-  if (!omitPut) {
-    const seq = evidence.noteRequest('PUT', chain.url);
-    const put = exchange('PUT', chain.url, null, null, 200, seq);
-    evidence.observe({ ...put, requestHeaders: { ...put.requestHeaders, 'content-type': mediaType === 'photo' ? 'image/png' : 'video/mp4' } });
-  }
-  const complete = `${API}/api/v1/media/upload-sessions/${chain.session}/complete`;
-  const seq = evidence.noteRequest('POST', complete);
-  evidence.observe(exchange('POST', complete, null, { mediaAssetId: chain.asset, status: 'active', sizeBytes: mediaType === 'photo' ? 20 : 40, checksumSha256: null }, 200, seq));
-  const body = { mediaAssetId: chain.asset };
-  const attached = evidence.noteRequest('POST', `${API}/api/v1/receptions/${target}/media`, body);
-  evidence.observe(exchange('POST', `${API}/api/v1/receptions/${target}/media`, body, { media: { mediaAssetId: chain.asset, mediaType, purpose: 'intake_evidence' } }, 201, attached));
-}
-function operation(omitVideoPut = false) {
-  const evidence = new S4MediaEvidence(API, R2, FRONTEND); evidence.beginUploadOperation(reception);
-  const photo = create(evidence, 20, 'photo'); finish(evidence, photo, 'photo');
-  const video = create(evidence, 21, 'video360'); finish(evidence, video, 'video360', reception, omitVideoPut);
-  return { evidence, photo, video };
-}
 describe('N-2: complete operation counts, new IDs/capabilities cannot hide extra uploads (synthetic)', () => {
   it('exactly 2 creates/PUTs and one complete/attach per expected chain pass; serialized evidence stays sanitized', () => {
     const { evidence } = operation(); expect(() => { evidence.assertUploadOperation(files); }).not.toThrow();
@@ -241,14 +206,14 @@ describe('N-2: complete operation counts, new IDs/capabilities cannot hide extra
     evidence.noteRequest('POST', `${API}/api/v1/media/upload-sessions`, { operationalContext: { type: 'reception', receptionId: reception } });
     expect(() => { evidence.assertUploadOperation(files); }).toThrow('exactamente 2 POST');
   });
-  it('checkpoint excludes earlier requests and their late responses; known other reception and OPTIONS do not count', () => {
+  it('checkpoint excludes earlier requests and their late responses; OPTIONS do not count', () => {
     const evidence = new S4MediaEvidence(API, R2, FRONTEND);
     const old = create(evidence, 30, 'photo'); finish(evidence, old, 'photo');
+    const foreign = create(evidence, 31, 'photo', id(11)); finish(evidence, foreign, 'photo', id(11));
     const lateSeq = evidence.noteRequest('PUT', old.url);
     evidence.beginUploadOperation(reception);
     evidence.observe(exchange('PUT', old.url, null, null, 200, lateSeq));
     const photo = create(evidence, 20, 'photo'); finish(evidence, photo, 'photo');
-    const foreign = create(evidence, 31, 'photo', id(11)); finish(evidence, foreign, 'photo', id(11));
     const video = create(evidence, 21, 'video360'); finish(evidence, video, 'video360');
     evidence.noteRequest('OPTIONS', photo.url); evidence.noteRequest('PUT', 'https://unrelated.example.invalid/object');
     expect(() => { evidence.assertUploadOperation(files); }).not.toThrow();

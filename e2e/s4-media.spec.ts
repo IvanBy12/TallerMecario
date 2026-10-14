@@ -4,14 +4,15 @@ import path from 'node:path';
 import { test } from '@playwright/test';
 import { field, probeApi } from './support/api-probe';
 import { isCanonicalId, type WorkshopContext } from '../src/features/auth/me-contract';
-import { openS4App } from './support/s4-context';
+import { S4ScenarioSession } from './support/s4-context';
 import { createS4Vehicle, selectS4Vehicle } from './support/s4-fixtures';
 import { assertMobileRuntime } from './support/mobile-runtime';
 import { confirmOwnerAndConsent, goToSection, intakeFor, submitIntake } from './support/reception-flow';
 import { recordS4Media, s4Check, type S4MediaEvidence } from './support/s4-media-evidence';
 import { requireS4Preflight, S4_FIXTURE_DIR, s4Origins } from './support/s4-preflight';
 import { verifyExpiredDownload } from './support/s4-download-expiry';
-import { clearS4Page, s4Safe } from './support/s4-safe';
+import { requireS4SavedSession } from './support/s4-session';
+import { clearS4Page, s4RunFailure, s4Safe } from './support/s4-safe';
 
 // Live HTTP only. Fresh customer/vehicle/reception for this run. No route mocks, offline, retry or reused open reception.
 test.describe.configure({ mode: 'serial' });
@@ -19,14 +20,15 @@ let receptionId = '';
 let photoId = '';
 let videoId = '';
 let context: WorkshopContext;
-let runContext: WorkshopContext | undefined;
+const scenarioSession = new S4ScenarioSession();
+test.beforeAll(async ({ browser }) => {
+  try { await requireS4SavedSession(browser); }
+  catch (error) { throw s4RunFailure('sesión inicial S4', error); }
+});
 test.beforeEach(async ({ page }) => {
   requireS4Preflight();
   await s4Safe(page, 'contexto vivo de la cuenta S4', async () => {
-    context = await openS4App(page);
-    if (runContext) s4Check(context.userId === runContext.userId && context.tenantId === runContext.tenantId &&
-      context.membershipId === runContext.membershipId, 'La identidad/taller S4 cambió durante la corrida.');
-    else runContext = context;
+    context = await scenarioSession.open(page);
   });
 });
 test.afterEach(async ({ page }) => {
@@ -88,7 +90,7 @@ test('S4-01 recepción nueva → foto/video360 → R2 → asociación → nueva 
       s4Check(photoId !== videoId && evidence.downloads() === 0, 'Assets distintos; no debe haber descarga automática.');
       const previousLists = evidence.listReads(receptionId);
       await goToSection(page, 'Panel');
-      await openS4App(page, `/recepciones/${receptionId}`);
+      await scenarioSession.open(page, `/recepciones/${receptionId}`);
       await page.getByRole('heading', { name: 'Foto 1', exact: true }).waitFor();
       await page.getByRole('heading', { name: 'Video 360° 2', exact: true }).waitFor();
       await evidence.settled();
