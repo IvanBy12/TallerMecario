@@ -69,6 +69,11 @@ test('S4-01 recepción nueva → foto/video360 → R2 → asociación → nueva 
         field(createdBody, 'reception', 'customerId') === fixture.customerId, 'API no confirmó recepción del cliente/vehículo nuevos.');
       receptionId = id;
       await page.getByRole('region', { name: 'Recepción creada' }).waitFor();
+      const uploadFiles = [
+        { mediaType: 'photo', sizeBytes: fs.statSync(path.join(S4_FIXTURE_DIR, 'photo.png')).size },
+        { mediaType: 'video360', sizeBytes: fs.statSync(path.join(S4_FIXTURE_DIR, 'video360.mp4')).size },
+      ] as const;
+      evidence.beginUploadOperation(receptionId);
       await page.getByRole('button', { name: 'Subir foto 1', exact: true }).click();
       await page.getByText('Foto 1 · Evidencia guardada', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Subir video', exact: true }).click();
@@ -79,6 +84,7 @@ test('S4-01 recepción nueva → foto/video360 → R2 → asociación → nueva 
       await evidence.settled();
       photoId = evidence.uploadChain(receptionId, 'photo', fs.statSync(path.join(S4_FIXTURE_DIR, 'photo.png')).size);
       videoId = evidence.uploadChain(receptionId, 'video360', fs.statSync(path.join(S4_FIXTURE_DIR, 'video360.mp4')).size);
+      evidence.assertUploadOperation(uploadFiles);
       s4Check(photoId !== videoId && evidence.downloads() === 0, 'Assets distintos; no debe haber descarga automática.');
       const previousLists = evidence.listReads(receptionId);
       await goToSection(page, 'Panel');
@@ -105,9 +111,8 @@ test('S4-01 recepción nueva → foto/video360 → R2 → asociación → nueva 
       await evidence.settled();
       evidence.readChain(receptionId, photoId, false);
       evidence.readChain(receptionId, videoId, true);
-      // Recheck after the complete successful journey, including new visit/playback.
-      evidence.uploadChain(receptionId, 'photo', fs.statSync(path.join(S4_FIXTURE_DIR, 'photo.png')).size);
-      evidence.uploadChain(receptionId, 'video360', fs.statSync(path.join(S4_FIXTURE_DIR, 'video360.mp4')).size);
+      // Recheck all creates/PUTs and each expected chain after the complete journey.
+      evidence.assertUploadOperation(uploadFiles);
       await page.getByRole('button', { name: 'Ocultar Foto 1', exact: true }).click();
       await page.getByRole('button', { name: 'Ocultar Video 360° 2', exact: true }).click();
       s4Check(await page.locator('.reception-evidence-view').count() === 0, 'Ocultar debe liberar las capacidades.');

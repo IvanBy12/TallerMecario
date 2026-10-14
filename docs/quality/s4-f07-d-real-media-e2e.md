@@ -260,3 +260,69 @@ Runner/specs/helpers históricos S3, scripts previos, producto `src/`, workflow 
 S4 REAL E2E: BLOCKED
 
 S4-F07-D FIXES: READY_FOR_RE_REVIEW
+
+
+## Corrección residual N-1 / N-2 — 2026-10-13
+
+HEAD recibido para esta corrección: `c2e1a0787a6d71303ffc139bb9641a0c7c13b0f6`; base histórica/incremental de la adaptación: `5f93740684ae47c481f58e5604f7ec81bc4ba910`. Rama y worktree sin cambios. La nueva entrega será un único commit local adicional sobre c2e1a07, sin amend, push ni PR. Los registros anteriores, la matriz de 24 criterios y el documento de recuperación se conservan como historia de la primera entrega.
+
+### Adjudicación independiente recibida
+
+Según la solicitud del propietario: H-3/H-4/H-5/H-6 CLOSED; correcciones principales H-1/H-2 verificadas con residuales LOW N-1/N-2. Sin defectos críticos/HIGH ni filtraciones de secretos; producto 1315/1315 y harness 273/273 acreditados en ese re-review. Esa adjudicación no fue realizada por el implementador de esta corrección y no acredita E2E reales.
+
+### N-1 — bootstrap funcional rotulado BLOCKED
+
+**Causa:** las aserciones de `/me`, `/me/context` y selección UI empleaban el prefijo BLOCKED, y `s4Safe` lo usaba como clasificación. También se trataba la pérdida de permisos/membership durante el escenario como una precondición inicial ausente.
+
+**Corrección:** `S4CheckFailure` admite clasificación explícita FAIL/BLOCKED. `s4Safe` prioriza ese dato y expone la misma clasificación en su error público sanitizado. La compatibilidad por prefijo permanece únicamente para los checks históricos que no declaran clasificación, preservando health, frontend y sandbox cerrados. No se cambia la configuración/preflight, transporte S3, DTOs ni rutas.
+
+`resolveS4Context` separa fase `precondition` del setup (predeterminada, usada por la validación de estados) y fase `scenario`, usada por `openS4App`. En setup, ausencia de sesión/membership/permisos elegibles produce `S4SessionUnavailable` BLOCKED con justificación y permite evaluar otro estado guardado. Una vez iniciado el recorrido, perder sesión/membership/permisos produce FAIL. HTTP 503 u otro HTTP incorrecto, contrato/JSON inválido, identidad/tenant/membership inconsistente y selección UI no confirmada producen FAIL explícito. Errores browser-fetch/CORS/token sin prueba de infraestructura caída son FAIL sanitizado; no se presume que todo error de red sea un bloqueo. La conectividad conocida en health sigue siendo BLOCKED.
+
+**Pruebas agregadas:** HTTP y Chromium locales sintéticos verifican `/me` 503 y contrato inválido, `/context` 503/JSON inválido e inconsistencia de user/tenant/membership, UI no confirmada/JSON inválido/selección ambigua, pérdida de sesión/membership/permisos y contexto 401/403 después de bootstrap válido, y fallo de transporte no demostrado como outage. Se comprueba clasificación interna y pública en la misma ejecución, limpieza about:blank y ausencia del marcador sensible en errores. Precondición ausente antes de escenario conserva BLOCKED; health con ECONNREFUSED real local conserva BLOCKED. Configuración/sandbox ausentes bloquean el CLI real de Playwright antes de ejecutar tests.
+
+Un control adicional usa el CLI/reporter JSON real de Playwright contra proveedores HTTP **sintéticos locales**: bootstrap 503 se reporta FAIL, health inaccesible y membership inicial ausente se reportan BLOCKED. Los tres tests deliberadamente negativos terminan failed, con `expected=0`, `unexpected=3`, exit 1 y cero PASS; el harness exige ese resultado. No es una corrida E2E real de TallerMecario.
+
+**Limitaciones:** las precondiciones se validan exclusivamente antes de los escenarios; el flag de fase no concede permisos ni sustituye `/me`/`/context`. La prueba local no demuestra autorización/servicios desplegados. La compatibilidad legacy no transforma respuestas funcionales N-1 en bloqueo.
+
+### N-2 — nueva sesión/capacidad ocultaba upload duplicado
+
+**Causa:** la cadena exigía un único PUT por cada capacidad esperada, pero una sesión extra con IDs/URL nuevos podía quedar fuera de esas correlaciones.
+
+**Corrección:** collector instalado desde el comienzo de S4-01 y checkpoint de operación inmediatamente antes del primer click de subida, una vez obtenido el ID de recepción real. Se registran secuencias de solicitudes y se llevan a las respuestas; el checkpoint descarta requests anteriores aunque su respuesta llegue tarde. La operación exige exactamente dos POST upload-session para esa recepción y exactamente dos PUT a R2. Se conservan los requisitos de PUT exitoso observado, un PUT por capacidad, un completion por sesión, una asociación por asset, headers/CORS y vínculos de identidad/tamaño. Se revalida al confirmar uploads y al finalizar nueva visita/playback.
+
+No cuenta OPTIONS ni tráfico de otros orígenes. Las capacidades conocidas de otras recepciones/corridas se excluyen. Un PUT desconocido dentro de la ventana del recorrido falla conservadoramente por conteo/correlación: no se puede atribuir a otra corrida sin evidencia. El navegador de S4-01 es aislado y no comparte requests con otras páginas/workers. URLs y bodies solo quedan en memoria privada; la serialización conserva rutas enmascaradas, estados y booleanos. S4-02 mantiene replay idempotente de asociación sin cambios.
+
+**Pruebas agregadas:** positiva de dos archivos; tercera sesión con nuevos IDs y flujo completo; tercer PUT con capacidad diferente; sesión extra sin PUT; request extra de create sin respuesta; PUT duplicado; PUT esperado ausente; completion/attach duplicado; requests anteriores con respuestas tardías; otra recepción/capacidad conocida, OPTIONS y otro origen excluidos. La operación debe delimitarse antes de afirmar su éxito. Se comprueba ausencia de capacidades/IDs/credenciales en el reporte serializado.
+
+**Limitaciones:** se observa la operación exitosa delimitada, no reintentos/interrupciones ni retención backend. Las aserciones no falsifican ni interceptan HTTP del runner real; los dobles están solo en el harness sintético.
+
+### Resultado y decisión residual
+
+Implementación y regresiones residuales verificadas localmente. La decisión de cierre de N-1/N-2 corresponde al próximo re-review independiente; no se auto-adjudican CLOSED.
+
+Gates ejecutados secuencialmente con Node 22.23.3:
+
+| Gate residual | Resultado |
+| --- | --- |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS, 0 warnings |
+| `npm test` | PASS final: 1315/1315, 48 archivos |
+| `npm run test:e2e:harness` | PASS: 305/305, 15 archivos; 32 regresiones nuevas frente a 273/273 |
+| `npm run build` | PASS; aviso previo de chunk 644.12 kB, sin cambiar límites |
+| `git diff --check` | PASS |
+| `npm run e2e:s4:list` | PASS: 1 setup + seis escenarios; cinco habilitados y S4-03 PENDING/expected skipped |
+| Preflight vacío normal / `--no-deps` | exit 1/BLOCKED, sin tests iniciados ni variables S3 requeridas |
+| Invariantes H-3/H-4/H-5/H-6 y S3/producto | Sin diff en los archivos cerrados/excluidos; sus regresiones conservadas pasan |
+
+El primer lint señaló tres interpolaciones numéricas de fixtures sintéticos; se corrigieron usando String, sin cambiar aserciones. La primera suite de producto dio **1314/1315** por espera de alerta en `download HTTP 403 shows safe error, no URL or unsafe request reference` de galería. La comprobación aislada pasó **44/44** y la repetición completa pasó **1315/1315**. Producto y timeouts permanecen intactos. La causa de esa intermitencia no se ha demostrado; se registra como riesgo a seguir, sin convertir el fallo inicial en PASS.
+
+Preflight actual: ausentes `VITE_API_BASE_URL`, `VITE_CLERK_PUBLISHABLE_KEY`, `E2E_S4_R2_ORIGIN` y `E2E_S4_SANDBOX_FILE`; cero estados privados JSON regulares. No se ejecutaron pruebas ni probes contra Clerk/API/DB/R2 reales. Pendientes: configuración inyectada, declaración sandbox, una sesión Development autorizada y verificación de servicios/CORS. No se solicitan tres cuentas ni IDs S3 históricos.
+
+Se preservan **cinco escenarios preparados**, **S4-03 PENDING/skip (jamás PASS)**, **E2E reales no ejecutados** y **Sprint 4 NOT_READY**. **Staging y QA reales siguen pendientes** conforme a [Notion Quality Gates §22](https://app.notion.com/p/3df6ab0a330d818486e9dd6f06b5f573) y su [snapshot §22](frontend-relevant-gates.md#22-flujo-obligatorio-de-sprint): Code Review → Unit/Integration/E2E → Staging → QA → Quality Gate. Los gates locales no son aprobación global ni habilitan el siguiente Sprint.
+
+Archivos del diff residual: `e2e/support/s4-check.ts`, `e2e/support/s4-safe.ts`, `e2e/support/s4-context.ts`, `e2e/support/s4-media-evidence.ts`, `e2e/s4-media.spec.ts`, nuevo `e2e-harness-tests/unit/s4-residual.test.ts`, y este informe. H-3/H-4/H-5/H-6, S3, src, backend, lockfile, config y scripts sin cambio. Re-review: comparar c2e1a07 contra el SHA nuevo informado al cierre, priorizando clasificación por fase y conteos globales con IDs/capacidades nuevos.
+
+
+S4 REAL E2E: BLOCKED
+
+S4-F07-D RESIDUAL FIXES: READY_FOR_RE_REVIEW

@@ -8,6 +8,7 @@ import { NetworkEvidence, parseUploadSessionEnvelope, parseActiveMediaEnvelope }
 export interface S4Exchange {
   readonly method: string; readonly url: string; readonly status: number;
   readonly requestDurationMs?: number;
+  readonly requestSeq?: number;
   readonly requestBody: unknown; readonly responseBody: unknown;
   readonly requestHeaders: Readonly<Record<string, string>>;
   readonly responseHeaders: Readonly<Record<string, string>>;
@@ -26,7 +27,9 @@ export class S4MediaEvidence {
   #seq = 0;
   #captureFailed = false;
   #downloadRequests = 0;
-  readonly #requests: { method: string; url: string; body: unknown }[] = [];
+  readonly #requests: { seq: number; method: string; url: string; body: unknown }[] = [];
+  #requestSeq = 0;
+  #operation: { receptionId: string; requestSeq: number; responseSeq: number } | undefined;
   constructor(readonly apiOrigin: string, readonly storageOrigin: string, readonly frontendOrigin: string) {
     this.#base = new NetworkEvidence(apiOrigin);
   }
@@ -59,7 +62,7 @@ export class S4MediaEvidence {
     while (this.#pending.size) await Promise.all([...this.#pending]);
     s4Check(!this.#captureFailed, 'No se pudo capturar evidencia S4 completa.');
   }
-  async capture(response: Response, startedAt: number): Promise<void> {
+  async capture(response: Response, startedAt: number, requestSeq?: number): Promise<void> {
     const url = new URL(response.url());
     if (![this.apiOrigin, this.storageOrigin].includes(url.origin)) return;
     const seq = ++this.#seq;
@@ -73,23 +76,65 @@ export class S4MediaEvidence {
     }
     if (isApi && mediaRoute && ok(response.status())) responseBody = await response.json().catch(() => null);
     this.observe({ method: request.method(), url: response.url(), status: response.status(), requestBody, responseBody,
-      requestDurationMs: performance.now() - startedAt,
+      requestDurationMs: performance.now() - startedAt, requestSeq,
       requestHeaders: await request.allHeaders(), responseHeaders: await response.allHeaders() }, seq);
   }
-  noteRequest(method: string, url: string, body: unknown = null): void {
+  noteRequest(method: string, url: string, body: unknown = null): number {
+    const seq = ++this.#requestSeq;
     const target = new URL(url);
     if ((method === 'PUT' && target.origin === this.storageOrigin) || (method === 'POST' && target.origin === this.apiOrigin &&
       /^\/api\/v1\/(?:media\/upload-sessions(?:\/[0-9a-f-]{36}\/complete)?|receptions\/[0-9a-f-]{36}\/media)$/.test(target.pathname))) {
-      this.#requests.push({ method, url, body });
+      this.#requests.push({ seq, method, url, body });
     }
     if (method === 'GET' && target.origin === this.apiOrigin && /\/download-url$/.test(target.pathname)) this.#downloadRequests++;
+    return seq;
   }
   downloads(): number {
     return Math.max(this.#downloadRequests, this.#events.filter(({ exchange: e }) => new URL(e.url).origin === this.apiOrigin &&
       /\/download-url$/.test(new URL(e.url).pathname)).length);
   }
+  /** Installed collector first; checkpoint immediately before the first upload click. */
+  beginUploadOperation(receptionId: string): void {
+    s4Check(this.#operation === undefined, 'La operación de upload S4 ya fue iniciada.');
+    this.#operation = { receptionId, requestSeq: this.#requestSeq, responseSeq: this.#seq };
+  }
+  #operationEvents(receptionId: string): Event[] {
+    const operation = this.#operation;
+    if (!operation || operation.receptionId !== receptionId) return this.#events;
+    return this.#events.filter(({ seq, exchange }) => exchange.requestSeq === undefined
+      ? seq > operation.responseSeq : exchange.requestSeq > operation.requestSeq);
+  }
+  #operationRequests(receptionId: string) {
+    const operation = this.#operation;
+    return operation?.receptionId === receptionId ? this.#requests.filter(r => r.seq > operation.requestSeq) : this.#requests;
+  }
+  assertUploadOperation(files: readonly { mediaType: 'photo' | 'video360'; sizeBytes: number }[]): void {
+    const operation = this.#operation;
+    s4Check(operation !== undefined && files.length === 2 && files.some(file => file.mediaType === 'photo') &&
+      files.some(file => file.mediaType === 'video360'), 'Falta operación S4 PNG/MP4 delimitada.');
+    const events = this.#operationEvents(operation.receptionId);
+    const requests = this.#operationRequests(operation.receptionId);
+    const create = (method: string, url: string, body: unknown) => method === 'POST' && new URL(url).origin === this.apiOrigin &&
+      new URL(url).pathname === '/api/v1/media/upload-sessions' && field(body, 'operationalContext', 'type') === 'reception' &&
+      field(body, 'operationalContext', 'receptionId') === operation.receptionId;
+    s4Check(Math.max(requests.filter(r => create(r.method, r.url, r.body)).length,
+      events.filter(({ exchange: e }) => create(e.method, e.url, e.requestBody)).length) === 2,
+      'La operación S4 debe emitir exactamente 2 POST de upload sessions.');
+    // Known capabilities of other receptions are excluded; unknown PUTs inside this operation fail closed.
+    const foreignCapabilities = new Set(this.#events.filter(({ exchange: e }) => e.method === 'POST' &&
+      new URL(e.url).origin === this.apiOrigin && new URL(e.url).pathname === '/api/v1/media/upload-sessions' &&
+      field(e.requestBody, 'operationalContext', 'type') === 'reception' &&
+      typeof field(e.requestBody, 'operationalContext', 'receptionId') === 'string' &&
+      field(e.requestBody, 'operationalContext', 'receptionId') !== operation.receptionId)
+      .map(({ exchange }) => field(exchange.responseBody, 'uploadUrl')).filter((url): url is string => typeof url === 'string').map(digest));
+    const put = (method: string, url: string) => method === 'PUT' && new URL(url).origin === this.storageOrigin && !foreignCapabilities.has(digest(url));
+    s4Check(Math.max(requests.filter(r => put(r.method, r.url)).length,
+      events.filter(({ exchange: e }) => put(e.method, e.url)).length) === 2, 'La operación S4 debe emitir exactamente 2 PUT a R2.');
+    for (const file of files) this.uploadChain(operation.receptionId, file.mediaType, file.sizeBytes);
+  }
   uploadChain(receptionId: string, mediaType: 'photo' | 'video360', sizeBytes: number): string {
-    const events = this.#events;
+    const events = this.#operationEvents(receptionId);
+    const requests = this.#operationRequests(receptionId);
     const created = events.find(({ exchange: e }) => e.method === 'POST' && new URL(e.url).origin === this.apiOrigin &&
       new URL(e.url).pathname === '/api/v1/media/upload-sessions' && e.status === 201 &&
       field(e.requestBody, 'mediaType') === mediaType && field(e.requestBody, 'retentionClass') === 'operational' &&
@@ -103,7 +148,7 @@ export class S4MediaEvidence {
     const put = events.find(({ seq, exchange: e }) => seq > created.seq && e.method === 'PUT' && digest(e.url) === digest(uploadUrl) && ok(e.status));
     s4Check(put !== undefined && safeStorage(put.exchange.requestHeaders), 'Falta PUT R2 correcto sin credenciales de API.');
     const puts = (method: string, url: string) => method === 'PUT' && new URL(url).origin === this.storageOrigin && digest(url) === digest(uploadUrl);
-    s4Check(Math.max(this.#requests.filter(r => puts(r.method, r.url)).length,
+    s4Check(Math.max(requests.filter(r => puts(r.method, r.url)).length,
       events.filter(({ exchange: e }) => puts(e.method, e.url)).length) === 1, 'PUT duplicado para la misma capacidad S4.');
     const signed = field(created.exchange.responseBody, 'uploadHeaders');
     s4Check(typeof signed === 'object' && signed !== null && Object.entries(signed).every(([key, value]) =>
@@ -130,7 +175,7 @@ export class S4MediaEvidence {
         ? `/api/v1/media/upload-sessions/${session.uploadSessionId}/complete` : `/api/v1/receptions/${receptionId}/media`) &&
       (completion || field(body, 'mediaAssetId') === session.mediaAssetId);
     for (const completion of [true, false]) {
-      s4Check(Math.max(this.#requests.filter(r => mutation(r.method, r.url, r.body, completion)).length,
+      s4Check(Math.max(requests.filter(r => mutation(r.method, r.url, r.body, completion)).length,
         events.filter(({ exchange: e }) => mutation(e.method, e.url, e.requestBody, completion)).length) === 1,
       completion ? 'Completion duplicado de la sesión S4.' : 'Asociación duplicada del asset S4.');
     }
@@ -163,17 +208,21 @@ export class S4MediaEvidence {
 }
 export async function recordS4Media(page: Page, origins: { api: string; storage: string; frontend: string }): Promise<S4MediaEvidence> {
   const evidence = new S4MediaEvidence(origins.api, origins.storage, origins.frontend);
-  const started = new WeakMap<ReturnType<Response['request']>, number>();
+  const started = new WeakMap<ReturnType<Response['request']>, { time: number; seq: number }>();
   page.on('request', request => {
-    started.set(request, performance.now());
+    const time = performance.now();
     let body: unknown = null;
     if (request.method() === 'POST' && new URL(request.url()).origin === origins.api &&
       /^\/api\/v1\/(?:media\/upload-sessions(?:\/[0-9a-f-]{36}\/complete)?|receptions\/[0-9a-f-]{36}\/media)$/.test(new URL(request.url()).pathname)) {
       try { body = JSON.parse(request.postData() ?? 'null'); } catch { /* Missing body fails correlation. */ }
     }
-    evidence.noteRequest(request.method(), request.url(), body);
+    const seq = evidence.noteRequest(request.method(), request.url(), body);
+    started.set(request, { time, seq });
   });
-  page.on('response', response => { evidence.track(evidence.capture(response, started.get(response.request()) ?? performance.now())); });
+  page.on('response', response => {
+    const observed = started.get(response.request());
+    evidence.track(evidence.capture(response, observed?.time ?? performance.now(), observed?.seq));
+  });
   // Playwright Page response events omit browser-generated OPTIONS; observe them through Chromium CDP only.
   const cdp = await page.context().newCDPSession(page);
   const options = new Map<string, { url: string; headers: Record<string, string> }>();

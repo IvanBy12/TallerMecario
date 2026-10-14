@@ -5,7 +5,14 @@ import { S4CheckFailure, s4Check } from './s4-media-evidence';
 import { verifyS4Frontend } from './s4-frontend';
 import { s4Origins } from './s4-preflight';
 
-export class S4SessionUnavailable extends S4CheckFailure {}
+export class S4SessionUnavailable extends S4CheckFailure {
+  constructor(message: string) { super(message, 'BLOCKED'); }
+}
+type S4ContextPhase = 'precondition' | 'scenario';
+function unavailableContext(phase: S4ContextPhase, reason: string): never {
+  if (phase === 'precondition') throw new S4SessionUnavailable(`S4 BLOCKED: ${reason}`);
+  throw new S4CheckFailure(`Contexto S4 revocado o perdido durante el escenario: ${reason}`, 'FAIL');
+}
 
 export const S4_PERMISSIONS = [
   'workshop.read', 'media.upload', 'media.read', 'receptions.read', 'receptions.create',
@@ -32,25 +39,31 @@ export async function probeS4Me(page: Page): Promise<ProbeResponse> {
     return { status: response.status, code: null, json: await response.json().catch(() => null) as unknown };
   }, s4Origins().api);
 }
-export async function resolveS4Context(page: Page): Promise<WorkshopContext> {
-  const response = await probeS4Me(page);
-  if (response.status === 401) throw new S4SessionUnavailable('S4 BLOCKED: sesión Clerk no válida.');
-  s4Check(response.status === 200, 'S4 BLOCKED: API bootstrap no disponible.');
+export async function resolveS4Context(page: Page, phase: S4ContextPhase = 'precondition'): Promise<WorkshopContext> {
+  const response = await probeS4Me(page).catch(() => {
+    // Browser fetch/CORS/token errors do not prove infrastructure outage. Health classifies known connectivity.
+    throw new S4CheckFailure('No se pudo completar bootstrap S4.', 'FAIL');
+  });
+  if (response.status === 401) unavailableContext(phase, 'sesión Clerk no válida.');
+  s4Check(response.status === 200, 'API bootstrap no disponible: HTTP incorrecto.', 'FAIL');
   const me = parseMe(response.json);
-  s4Check(me !== null, 'S4 BLOCKED: contrato bootstrap inválido.');
-  if (me.memberships.length === 0) throw new S4SessionUnavailable('S4 BLOCKED: memberships activas no verificadas.');
+  s4Check(me !== null, 'Contrato bootstrap inválido.', 'FAIL');
+  if (me.memberships.length === 0) unavailableContext(phase, 'memberships activas no verificadas.');
   // Deterministic discovery only among backend-returned memberships; no configured/historical ID.
   for (const member of [...me.memberships].sort((a, b) => a.tenantId.localeCompare(b.tenantId))) {
-    const result = await probeApi(page, s4Origins().api, { method: 'GET', path: '/api/v1/me/context', tenantId: member.tenantId });
+    const result = await probeApi(page, s4Origins().api, { method: 'GET', path: '/api/v1/me/context', tenantId: member.tenantId }).catch(() => {
+      throw new S4CheckFailure('No se pudo completar consulta de contexto S4.', 'FAIL');
+    });
+    if (result.status === 401) unavailableContext(phase, 'sesión Clerk no válida.');
     if (result.status === 403) continue;
-    s4Check(result.status === 200, 'S4 BLOCKED: contexto backend no disponible.');
+    s4Check(result.status === 200, 'Contexto backend devolvió HTTP incorrecto.', 'FAIL');
     const parsed = parseMeContext(result.json);
     s4Check(parsed !== null && parsed.tenantId === member.tenantId && parsed.membershipId === member.membershipId && parsed.userId === me.user?.id,
-      'S4 BLOCKED: contexto no coincide con identidad/membership verificadas.');
+      'Contexto no coincide con identidad/membership verificadas.', 'FAIL');
     const context = usableS4Context(me, result.json);
     if (context) return context;
   }
-  throw new S4SessionUnavailable('S4 BLOCKED: ninguna membership concede los permisos tenant requeridos.');
+  unavailableContext(phase, 'ninguna membership concede los permisos tenant requeridos.');
 }
 /** Let the product select the same verified context, including accounts with multiple memberships. */
 export async function openS4App(page: Page, destination = '/panel'): Promise<WorkshopContext> {
@@ -61,21 +74,20 @@ export async function openS4App(page: Page, destination = '/panel'): Promise<Wor
     const clerk = Reflect.get(window, 'Clerk') as { loaded?: boolean } | undefined;
     return clerk?.loaded === true;
   });
-  const context = await resolveS4Context(page);
+  const context = await resolveS4Context(page, 'scenario');
   const shell = page.locator('main#contenido-principal');
   const selection = page.getByRole('heading', { name: 'Selecciona un taller', exact: true });
   await shell.or(selection).first().waitFor();
   if (await selection.isVisible()) {
     const choice = page.getByRole('button', { name: context.workshop.displayName, exact: true });
-    s4Check(await choice.count() === 1, 'S4 BLOCKED: selección de taller ambigua en la UI.');
+    s4Check(await choice.count() === 1, 'Selección de taller incorrecta o ambigua en la UI.', 'FAIL');
     const selectedResponse = page.waitForResponse(response => new URL(response.url()).origin === s4Origins().api &&
       new URL(response.url()).pathname === '/api/v1/me/context' && response.request().headers()['x-tenant-id'] === context.tenantId);
-    await choice.click();
-    const selected = await selectedResponse;
-    const selectedBody: unknown = await selected.json();
+    const [selected] = await Promise.all([selectedResponse, choice.click()]);
+    const selectedBody: unknown = await selected.json().catch(() => null);
     const verified = parseMeContext(selectedBody);
     s4Check(selected.status() === 200 && verified?.tenantId === context.tenantId && verified.membershipId === context.membershipId &&
-      verified.userId === context.userId, 'S4 BLOCKED: la UI no confirmó el taller verificado.');
+      verified.userId === context.userId, 'La UI no confirmó el taller verificado.', 'FAIL');
     await shell.waitFor();
   }
   // Observe the actual product context request, never set app storage/claims as authority.
