@@ -407,3 +407,71 @@ Cinco escenarios preparados, S4-03 PENDING/skip y jamás PASS, E2E reales BLOCKE
 S4 REAL E2E: BLOCKED
 
 S4-F07-D FINAL FIXES: READY_FOR_RE_REVIEW
+
+## Cierre de Code Review independiente y auditoría documental
+
+Esta sección es el **estado vigente** del ticket y prevalece sobre cualquier estado anterior del documento. Los estados `READY_FOR_RE_REVIEW` (incluido el cierre de la corrección final R-1 / R-2) se conservan íntegros como registro histórico de cada entrega, pero **ya no representan el estado vigente**: el re-review independiente final que figuraba como pendiente fue completado y aprobado.
+
+### Revisión
+
+| Concepto | Registro |
+| --- | --- |
+| Commit técnico auditado | `cf4de4070cab842d08a4eb62f2b6161200fc5274` |
+| Re-review independiente final | `S4-F07-D FINAL RE-REVIEW: NO FINDINGS` |
+| Revisor | Codex |
+| Auditoría documental | Finding único D-1 (P2): el documento mostraba el re-review final como pendiente. Corregido por esta sección; sin findings de código nuevos. |
+
+### Findings cerrados
+
+| Findings | Estado |
+| --- | --- |
+| H-1 a H-6 | CLOSED |
+| N-1 y N-2 | CLOSED |
+| R-1 y R-2 | CLOSED |
+
+Los diez findings figuran CLOSED. No hay findings de código abiertos.
+
+### Evidencia verificada por Codex en el re-review
+
+- Producto: 1315/1315 PASS.
+- Harness: 356/356 PASS.
+- Typecheck, lint y build: PASS.
+- Discovery: cinco escenarios habilitados y S4-03 PENDING.
+- Preflight vacío: BLOCKED.
+- Worktree limpio durante el re-review.
+
+Estos resultados corresponden a las ejecuciones ya registradas arriba y a la verificación del revisor; este cierre documental **no** vuelve a ejecutar las 1315 pruebas de producto ni las 356 del harness y no los presenta como una nueva corrida.
+
+### Decisiones de aceptación separadas
+
+| Decisión | Estado | Alcance |
+| --- | --- | --- |
+| A. Aceptación técnica del runner | `ACCEPTED_FOR_INCREMENTAL_PR` | El código y sus pruebas sintéticas tienen revisión independiente aprobada. |
+| B. Aceptación funcional E2E | `BLOCKED` | Los cinco escenarios reales no han sido ejecutados contra el entorno integrado. S4-03 continúa PENDING porque requiere identidades adicionales para demostrar aislamiento multimedia. |
+| C. Quality Gate global | `SPRINT 4: NOT_READY` | El PR del runner no equivale a certificar multimedia real ni a cerrar el Sprint 4. |
+
+### Limitaciones pendientes (no son findings del código F07-D)
+
+- API/DB de pruebas operativas.
+- Sandbox privado acreditado.
+- Una única sesión autorizada en Clerk Development.
+- Verificación R2/CORS mediante capacidades firmadas reales.
+- E2E reales de los cinco escenarios.
+- S4-03 PENDING.
+- Retry/upload interrumpido/outage R2.
+- Consulta multimedia por orden.
+- Evidencia backend restante.
+- Staging y QA.
+- Intermitencia preexistente de galería F07-C (riesgo separado, causa no demostrada; documentado arriba).
+
+### Estado vigente
+
+- F07-D (runner y pruebas sintéticas): apto para PR incremental.
+- E2E reales: BLOCKED / no ejecutados.
+- Sprint 4: NOT_READY.
+
+S4-F07-D FINAL RE-REVIEW: NO FINDINGS
+
+S4 REAL E2E: BLOCKED
+
+SPRINT 4: NOT_READY
