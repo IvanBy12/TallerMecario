@@ -28,8 +28,31 @@ export const PERMISSIONS: EffectivePermissions = ['receptions.read', 'receptions
 const RuntimeContext = createContext<ReceptionRuntime | null>(null);
 export function renderReception(path: string, respond: (call: Call) => FetchResponse | Promise<FetchResponse>, permissions: EffectivePermissions = PERMISSIONS, strict = false, exits: { readonly onSignOut?: () => void; readonly onChangeWorkshop?: () => void } = {}) {
     const calls: Call[] = [];
+    const waitingCalls = new Set<{ pathname: string; resolve: (call: Call) => void }>();
+    const waitForCall = (pathname: string): Promise<Call> => {
+      const existing = calls.find(call => call.url.pathname === pathname);
+      return existing ? Promise.resolve(existing) : new Promise(resolve => { waitingCalls.add({ pathname, resolve }); });
+    };
     const tokenCalls: unknown[] = [];
-    const apiClient = createApiClient({ apiOrigin: 'https://api.example.test', getToken: (options) => { tokenCalls.push(options); return Promise.resolve({ kind: 'token', token: 'test-token' }); }, fetchImpl: (url, init) => { const call = { url: new URL(url), init }; calls.push(call); return Promise.resolve(respond(call)); } });
+    const apiClient = createApiClient({ apiOrigin: 'https://api.example.test', getToken: (options) => { tokenCalls.push(options); return Promise.resolve({ kind: 'token', token: 'test-token' }); }, fetchImpl: (url, init) => { const call = { url: new URL(url), init }; calls.push(call);
+      for (const waiting of waitingCalls) if (waiting.pathname === call.url.pathname) {
+        waitingCalls.delete(waiting); waiting.resolve(call);
+      }
+      return Promise.resolve(respond(call)); } });
+    // Observe real client promises before rendering: effects may issue the initial
+    // list during render's act boundary, before a caller can install a spy.
+    const operations: { pathname: string; done: Promise<unknown> }[] = [];
+    const getJson = apiClient.getJson;
+    apiClient.getJson = (request, parse) => {
+      const done = getJson(request, parse);
+      operations.push({ pathname: request.path, done });
+      return done;
+    };
+    const operation = (pathname: string): Promise<unknown> => {
+      const found = operations.filter(item => item.pathname === pathname).at(-1);
+      if (!found) throw new Error('Expected an actual client operation');
+      return found.done;
+    };
     const runtime: ReceptionRuntime = { apiClient, tenantId: IDS.tenant, identity: 'synthetic-user:synthetic-session', permissions };
     function View() {
       const next = useContext(RuntimeContext);
@@ -40,5 +63,5 @@ export function renderReception(path: string, respond: (call: Call) => FetchResp
     const view = (next: ReceptionRuntime | null) => <RuntimeContext.Provider value={next}><RouterProvider router={router}/></RuntimeContext.Provider>;
     const wrapped = (next: ReceptionRuntime | null) => strict ? <StrictMode>{view(next)}</StrictMode> : view(next);
     const rendered = render(wrapped(runtime));
-    return { ...rendered, calls, tokenCalls, apiClient, runtime, router, updateRuntime: (next: ReceptionRuntime | null) => { rendered.rerender(wrapped(next)); } };
+    return { ...rendered, calls, waitForCall, operation, tokenCalls, apiClient, runtime, router, updateRuntime: (next: ReceptionRuntime | null) => { rendered.rerender(wrapped(next)); } };
 }

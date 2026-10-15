@@ -15,7 +15,44 @@ function setup(media: unknown = [dto], read: (call: Call) => FetchResponse | Pro
     call.url.pathname.endsWith('/download-url') ? read(call) :
       call.url.pathname.endsWith('/media') ? jsonResponse({ media }) : jsonResponse({ reception: DETAIL }), permissions, true);
 }
-async function open() { fireEvent.click(await screen.findByRole('button', { name: 'Ver Foto 1' })); }
+async function clickView(h: ReturnType<typeof renderReception>, button: HTMLElement, complete = true) {
+  // Finding a button only proves DOM commit. Finish the list and StrictMode's
+  // passive effect replay before clicking, or its cleanup can abort the new view.
+  const receptionId = h.router.state.location.pathname.split('/').at(-1);
+  const listPath = `/api/v1/receptions/${String(receptionId)}/media`;
+  await act(async () => { await h.operation(listPath); });
+  await act(async () => {
+    fireEvent.click(button);
+    if (complete) await h.operation(`/api/v1/media/${asset}/download-url`);
+  });
+}
+async function open(h: ReturnType<typeof renderReception>, complete = true) {
+  await clickView(h, await screen.findByRole('button', { name: 'Ver Foto 1' }), complete);
+}
+async function requested(h: ReturnType<typeof renderReception>, pathname: string) {
+  let call!: Call;
+  // A loading render precedes token acquisition and does not prove HTTP started.
+  await act(async () => { call = await h.waitForCall(pathname); });
+  return call;
+}
+// Hold JSON consumption after the synthetic HTTP response has arrived. This keeps
+// token acquisition, ApiClient, the production parser and the view hook in the test.
+function controlledDownload(response = download()) {
+  let resolve!: (body: unknown) => void, started!: () => void;
+  const body = new Promise<unknown>(done => { resolve = done; });
+  const reading = new Promise<void>(done => { started = done; });
+  const json = vi.fn(() => { started(); return body; });
+  return {
+    response: { ...response, json }, json,
+    async waitForRead() { await act(async () => { await reading; }); },
+    async complete(h: ReturnType<typeof renderReception>) {
+      await act(async () => {
+        resolve(await response.json());
+        await h.operation(`/api/v1/media/${asset}/download-url`);
+      });
+    },
+  };
+}
 function fail(status: number) {
   return jsonResponse({ error: { code: status === 403 ? 'PERMISSION_DENIED' : 'MEDIA_ASSET_NOT_FOUND', message: signed, request_id: signed } }, status);
 }
@@ -37,7 +74,7 @@ describe('operational gallery in reception detail with production provider/clien
     const gallery = screen.getByRole('region', { name: 'Evidencia de recepción' });
     expect(within(gallery).getAllByRole('heading', { level: 3 }).map(e => e.textContent)).toEqual(['Video 360° 1', 'Foto 2', 'Video 3']);
     expect(h.calls.every(c => !c.url.pathname.endsWith('/download-url'))).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Ver Foto 2' }));
+    await clickView(h, screen.getByRole('button', { name: 'Ver Foto 2' }));
     const img = await screen.findByRole('img');
     expect(img.getAttribute('src')).toBe(signed);
     expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
@@ -51,7 +88,7 @@ describe('operational gallery in reception detail with production provider/clien
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
     const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
     const h = setup([{ ...dto, mediaType, mimeType: 'video/mp4' }]);
-    fireEvent.click(await screen.findByRole('button', { name: mediaType === 'video' ? 'Ver Video 1' : 'Ver Video 360° 1' }));
+    await clickView(h, await screen.findByRole('button', { name: mediaType === 'video' ? 'Ver Video 1' : 'Ver Video 360° 1' }));
     await waitFor(() => { expect(h.container.querySelector('video')).toBeTruthy(); });
     const video = h.container.querySelector('video');
     expect(video?.getAttribute('preload')).toBe('none');
@@ -71,16 +108,16 @@ describe('operational gallery in reception detail with production provider/clien
     expect(h.calls.some(c => c.url.pathname.endsWith('/download-url'))).toBe(false);
   });
   it.each(['http://unsafe.test', 'https://user:pass@unsafe.test/object', 'https://unsafe.test/#private'])('rejects invalid signed URL %s', async url => {
-    setup([dto], () => download(undefined, url)); await open();
+    const h = setup([dto], () => download(undefined, url)); await open(h);
     await screen.findByRole('alert'); expect(screen.queryByRole('img')).toBeNull();
     expect(document.body.textContent).not.toContain(url);
   });
   it('rejects already expired URL and only reacquires upon another user action', async () => {
     let count = 0;
     const h = setup([dto], () => ++count === 1 ? download('2020-01-01T00:00:00Z') : download());
-    await open(); await screen.findByText(/El acceso temporal expiró/);
+    await open(h); expect(screen.getByText(/El acceso temporal expiró/)).toBeTruthy();
     expect(screen.queryByRole('img')).toBeNull(); expect(count).toBe(1);
-    await open(); await screen.findByRole('img'); expect(count).toBe(2);
+    await open(h); expect(screen.getByRole('img')).toBeTruthy(); expect(count).toBe(2);
     expect(h.calls.filter(c => c.url.pathname.endsWith('/download-url'))).toHaveLength(2);
   });
   it('removes displayed URL at expiry and checks expiry after tab resume', async () => {
@@ -103,7 +140,14 @@ describe('operational gallery in reception detail with production provider/clien
   });
   it.each([401, 403, 404])('download HTTP %s shows safe error, no URL or unsafe request reference', async status => {
     const log = vi.spyOn(console, 'log'), error = vi.spyOn(console, 'error');
-    const h = setup([dto], () => fail(status)); await open(); await screen.findByRole('alert');
+    const pending = controlledDownload(fail(status));
+    const h = setup([dto], () => pending.response); await open(h, false);
+    await pending.waitForRead();
+    expect(pending.json).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Solicitando acceso temporal…')).toBeTruthy();
+    expect(screen.queryByRole('img')).toBeNull();
+    await pending.complete(h);
+    expect(screen.getByRole('alert')).toBeTruthy();
     expect(screen.queryByRole('img')).toBeNull();
     expect(h.container.innerHTML).not.toContain(signed);
     expect(JSON.stringify([log.mock.calls, error.mock.calls])).not.toContain(signed);
@@ -111,7 +155,7 @@ describe('operational gallery in reception detail with production provider/clien
     expect(JSON.stringify(localStorage)).not.toContain(signed); expect(JSON.stringify(sessionStorage)).not.toContain(signed);
   });
   it('removes inaccessible binary URL and never retries storage automatically', async () => {
-    const h = setup(); await open(); fireEvent.error(await screen.findByRole('img'));
+    const h = setup(); await open(h); fireEvent.error(await screen.findByRole('img'));
     expect(screen.queryByRole('img')).toBeNull(); expect(h.container.innerHTML).not.toContain(signed);
     await screen.findByText(/No se pudo visualizar/);
     expect(h.calls.filter(c => c.url.pathname.endsWith('/download-url'))).toHaveLength(1);
@@ -123,7 +167,7 @@ describe('operational gallery in reception detail with production provider/clien
     expect(h.calls.some(c => c.url.pathname.endsWith('/media'))).toBe(false);
   });
   it.each(['identity', 'tenantId', 'permissions'] as const)('invalidates displayed URL on %s change', async field => {
-    const h = setup(); await open(); await screen.findByRole('img');
+    const h = setup(); await open(h); await screen.findByRole('img');
     act(() => { h.updateRuntime({ ...h.runtime, [field]: field === 'permissions' ? PERMISSIONS : IDS.other }); });
     expect(screen.queryByRole('img')).toBeNull(); expect(h.container.innerHTML).not.toContain(signed);
   });
@@ -133,7 +177,7 @@ describe('operational gallery in reception detail with production provider/clien
     const h = renderReception(`/recepciones/${IDS.reception}`, call => call.url.pathname.endsWith('/media') ?
       stage === 'list' ? pending : jsonResponse({ media: [dto] }) :
       call.url.pathname.endsWith('/download-url') ? pending : jsonResponse({ reception: DETAIL }), permissions);
-    if (stage === 'download') await open();
+    if (stage === 'download') await open(h, false);
     await waitFor(() => { expect(h.calls.some(c => c.url.pathname.endsWith(stage === 'list' ? '/media' : '/download-url'))).toBe(true); });
     const request = h.calls.find(c => c.url.pathname.endsWith(stage === 'list' ? '/media' : '/download-url'));
     h.unmount(); expect(request?.init.signal?.aborted).toBe(true);
@@ -168,47 +212,71 @@ describe('operational gallery in reception detail with production provider/clien
     const h = renderReception(`/recepciones/${IDS.reception}`, call => call.url.pathname.endsWith('/media') ?
       changed ? jsonResponse({ media: [] }) : pending : jsonResponse({ reception: DETAIL }), permissions);
     await screen.findByText('Consultando evidencias…');
-    const old = h.calls.find(c => c.url.pathname.endsWith('/media'));
+    const old = await requested(h, `/api/v1/receptions/${IDS.reception}/media`);
     changed = true;
     act(() => { h.updateRuntime({ ...h.runtime, [field]: IDS.other }); });
-    expect(old?.init.signal?.aborted).toBe(true);
+    expect(old.init.signal?.aborted).toBe(true);
     await screen.findByText('No hay evidencias asociadas a esta recepción.');
     await act(() => Promise.resolve().then(() => { resolve(jsonResponse({ media: [dto] })); }));
     expect(screen.queryByRole('button', { name: 'Ver Foto 1' })).toBeNull();
     if (field === 'tenantId') expect(h.calls.at(-1)?.init.headers).toMatchObject({ 'X-Tenant-Id': IDS.other });
   });
   it.each(['identity', 'tenantId'] as const)('cancels pending download on %s change and discards late URL', async field => {
-    let resolve!: (value: FetchResponse) => void;
-    const pending = new Promise<FetchResponse>(done => { resolve = done; });
-    const h = setup([dto], () => pending); await open();
-    await screen.findByText('Solicitando acceso temporal…');
-    const old = h.calls.find(c => c.url.pathname.endsWith('/download-url'));
+    const pending = controlledDownload();
+    const h = setup([dto], () => pending.response); await open(h, false);
+    await pending.waitForRead();
+    expect(pending.json).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Solicitando acceso temporal…')).toBeTruthy();
+    expect(screen.queryByRole('img')).toBeNull();
+    const old = await requested(h, `/api/v1/media/${asset}/download-url`);
     act(() => { h.updateRuntime({ ...h.runtime, [field]: IDS.other }); });
-    expect(old?.init.signal?.aborted).toBe(true);
-    await act(() => Promise.resolve().then(() => { resolve(download()); }));
+    expect(old.init.signal?.aborted).toBe(true);
+    await pending.complete(h);
     expect(screen.queryByRole('img')).toBeNull(); expect(h.container.innerHTML).not.toContain(signed);
+    expect(h.calls.filter(c => c.url.pathname.endsWith('/download-url'))).toHaveLength(1);
   });
   it('canceling a pending view discards late capability; re-opening requests a fresh URL', async () => {
-    let resolve!: (value: FetchResponse) => void;
-    const pending = new Promise<FetchResponse>(done => { resolve = done; });
+    const pending = controlledDownload();
     let count = 0;
-    const h = setup([dto], () => ++count === 1 ? pending : download()); await open();
-    fireEvent.click(await screen.findByRole('button', { name: 'Ocultar Foto 1' }));
-    const old = h.calls.find(c => c.url.pathname.endsWith('/download-url'));
-    expect(old?.init.signal?.aborted).toBe(true);
-    await act(() => Promise.resolve().then(() => { resolve(download()); }));
+    const h = setup([dto], () => ++count === 1 ? pending.response : download()); await open(h, false);
+    await pending.waitForRead();
+    expect(pending.json).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Solicitando acceso temporal…')).toBeTruthy();
     expect(screen.queryByRole('img')).toBeNull();
-    await open(); await screen.findByRole('img'); expect(count).toBe(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Ocultar Foto 1' }));
+    const old = await requested(h, `/api/v1/media/${asset}/download-url`);
+    expect(old.init.signal?.aborted).toBe(true);
+    await pending.complete(h);
+    expect(screen.queryByRole('img')).toBeNull(); expect(h.container.innerHTML).not.toContain(signed);
+    expect(count).toBe(1);
+    await open(h); expect(screen.getByRole('img').getAttribute('src')).toBe(signed); expect(count).toBe(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Ocultar Foto 1' }));
+    expect(h.container.innerHTML).not.toContain(signed);
+    expect(h.calls.filter(c => c.url.pathname.endsWith('/download-url'))).toHaveLength(2);
   });
   it('success never writes the signed URL to storage, logs or API requests', async () => {
     const storage = vi.spyOn(Storage.prototype, 'setItem');
     const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'info'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error')];
-    const h = setup(); await open(); await screen.findByRole('img');
+    const pending = controlledDownload();
+    const h = setup([dto], () => pending.response); await open(h, false);
+    await pending.waitForRead();
+    expect(pending.json).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Solicitando acceso temporal…')).toBeTruthy();
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(h.container.innerHTML).not.toContain(signed);
+    expect(h.calls.filter(c => c.url.pathname.endsWith('/download-url'))).toHaveLength(1);
+    await pending.complete(h);
+    const image = screen.getByRole('img', { name: 'Evidencia de recepción: Foto 1' });
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(image.getAttribute('src')).toBe(signed);
+    expect(screen.queryByText('Solicitando acceso temporal…')).toBeNull();
     expect(storage).not.toHaveBeenCalled();
+    expect(JSON.stringify(localStorage)).not.toContain(signed); expect(JSON.stringify(sessionStorage)).not.toContain(signed);
     expect(JSON.stringify(logs.map(log => log.mock.calls))).not.toContain(signed);
     expect(JSON.stringify(h.calls)).not.toContain(signed);
     fireEvent.click(screen.getByRole('button', { name: 'Ocultar Foto 1' }));
-    expect(h.container.innerHTML).not.toContain(signed);
+    expect(screen.queryByRole('img')).toBeNull(); expect(h.container.innerHTML).not.toContain(signed);
+    expect(h.calls.filter(c => c.url.pathname.endsWith('/download-url'))).toHaveLength(1);
   });
   it('historical closed reception keeps checklist/damages/order while gallery is empty', async () => {
     renderReception(`/recepciones/${IDS.reception}`, call => call.url.pathname.endsWith('/media') ? jsonResponse({ media: [] }) :
@@ -242,18 +310,18 @@ describe('operational gallery in reception detail with production provider/clien
 
 describe('F-1 focus regressions', () => {
   it('keeps the same focused control through loading, ready and repeated view/hide clicks without duplicate requests', async () => {
-    let resolve!: (value: FetchResponse) => void;
-    const pending = new Promise<FetchResponse>(done => { resolve = done; });
+    const pending = controlledDownload();
     let count = 0;
-    setup([dto], () => ++count === 1 ? pending : download());
+    const h = setup([dto], () => ++count === 1 ? pending.response : download());
     const button = await screen.findByRole('button', { name: 'Ver Foto 1' });
-    button.focus(); fireEvent.click(button);
-    await screen.findByText('Solicitando acceso temporal…');
+    button.focus(); await clickView(h, button, false);
+    await pending.waitForRead();
+    expect(screen.getByText('Solicitando acceso temporal…')).toBeTruthy();
     expect(document.activeElement).toBe(button);
     expect(screen.getByRole('button', { name: 'Ocultar Foto 1' })).toBe(button);
     expect(button.hasAttribute('disabled')).toBe(false);
-    await act(() => Promise.resolve().then(() => { resolve(download()); }));
-    await screen.findByRole('img');
+    await pending.complete(h);
+    expect(screen.getByRole('img').getAttribute('src')).toBe(signed);
     expect(document.activeElement).toBe(button);
     expect(screen.getByRole('button', { name: 'Ocultar Foto 1' })).toBe(button);
     fireEvent.click(button);
@@ -261,7 +329,7 @@ describe('F-1 focus regressions', () => {
     expect(document.activeElement).toBe(button);
     expect(screen.queryByRole('img')).toBeNull();
     for (let cycle = 0; cycle < 2; cycle++) {
-      fireEvent.click(button); await screen.findByRole('img');
+      await clickView(h, button); expect(screen.getByRole('img')).toBeTruthy();
       expect(document.activeElement).toBe(button);
       fireEvent.click(button);
       expect(document.activeElement).toBe(button);
@@ -271,14 +339,14 @@ describe('F-1 focus regressions', () => {
   });
   it('keeps the focused control on download error and allows an explicit new request', async () => {
     let count = 0;
-    setup([dto], () => ++count === 1 ? fail(404) : download());
+    const h = setup([dto], () => ++count === 1 ? fail(404) : download());
     const button = await screen.findByRole('button', { name: 'Ver Foto 1' });
-    button.focus(); fireEvent.click(button);
+    button.focus(); await clickView(h, button);
     await screen.findByRole('alert');
     expect(document.activeElement).toBe(button);
     expect(screen.getByRole('button', { name: 'Ver Foto 1' })).toBe(button);
     expect(count).toBe(1);
-    fireEvent.click(button); await screen.findByRole('img');
+    await clickView(h, button); expect(screen.getByRole('img')).toBeTruthy();
     expect(document.activeElement).toBe(button); expect(count).toBe(2);
   });
   it('keeps the focused control at expiry without reusing or renewing the URL automatically', async () => {
@@ -300,7 +368,7 @@ describe('F-1 focus regressions', () => {
     const pending = new Promise<FetchResponse>(done => { resolve = done; });
     const h = setup([dto], () => pending);
     const button = await screen.findByRole('button', { name: 'Ver Foto 1' });
-    button.focus(); fireEvent.click(button);
+    button.focus(); await clickView(h, button, false);
     await screen.findByText('Solicitando acceso temporal…');
     expect(screen.getByRole('button', { name: 'Ocultar Foto 1' })).toBe(button);
     fireEvent.click(button);
@@ -336,27 +404,27 @@ describe('F-2 reception route isolation with real composition', () => {
       });
       return jsonResponse({ reception: { ...DETAIL, receptionId: call.url.pathname.endsWith(IDS.other) ? IDS.other : IDS.reception } });
     }, permissions);
-    fireEvent.click(await screen.findByRole('button', { name: 'Ver Video 360° 1' }));
+    await clickView(h, await screen.findByRole('button', { name: 'Ver Video 360° 1' }));
     await waitFor(() => { expect(h.container.querySelector('video')?.getAttribute('src')).toBe(signed); });
     const videoA = h.container.querySelector('video');
     if (videoA === null) throw new Error('Expected reception A video');
-    fireEvent.click(screen.getByRole('button', { name: 'Ver Foto 2' }));
+    await clickView(h, screen.getByRole('button', { name: 'Ver Foto 2' }), false);
     await screen.findByText('Solicitando acceso temporal…');
-    const pendingA = h.calls.find(call => call.url.pathname === `/api/v1/media/${IDS.customer}/download-url`);
+    const pendingA = await requested(h, `/api/v1/media/${IDS.customer}/download-url`);
     await act(async () => { await h.router.navigate(`/recepciones/${IDS.other}`); });
     await screen.findByText('Consultando evidencias…');
     expect(h.container.querySelector('img, video')).toBeNull();
     expect(h.container.innerHTML).not.toContain(signed);
     expect(videoA.isConnected).toBe(false); expect(videoA.hasAttribute('src')).toBe(false);
     expect(paused).toContain(videoA); expect(loaded).toContain(videoA);
-    expect(pendingA?.init.signal?.aborted).toBe(true);
+    expect(pendingA.init.signal?.aborted).toBe(true);
     await act(() => Promise.resolve().then(() => { resolveA(jsonResponse({
       mediaAssetId: IDS.customer, downloadUrl: signed, expiresAt: new Date(Date.now() + 60000).toISOString(),
     })); }));
     expect(h.container.querySelector('img, video')).toBeNull();
     expect(h.container.innerHTML).not.toContain(signed);
     await act(() => Promise.resolve().then(() => { resolveB(jsonResponse({ media: [mediaB] })); }));
-    await open();
+    await open(h, false);
     expect((await screen.findByRole('img')).getAttribute('src')).toBe(urlB);
     expect(h.container.innerHTML).not.toContain(signed);
     expect(h.container.querySelector('video')).toBeNull();
@@ -377,11 +445,11 @@ describe('F-2 reception route isolation with real composition', () => {
       return jsonResponse({ reception: { ...DETAIL, receptionId: call.url.pathname.endsWith(IDS.other) ? IDS.other : IDS.reception } });
     }, permissions);
     await screen.findByText('Consultando evidencias…');
-    const old = h.calls.find(call => call.url.pathname === `/api/v1/receptions/${IDS.reception}/media`);
+    const old = await requested(h, `/api/v1/receptions/${IDS.reception}/media`);
     await act(async () => { await h.router.navigate(`/recepciones/${IDS.other}`); });
     if (changeTenant) act(() => { h.updateRuntime({ ...h.runtime, tenantId: IDS.customer }); });
     await screen.findByRole('button', { name: 'Ver Video 1' });
-    expect(old?.init.signal?.aborted).toBe(true);
+    expect(old.init.signal?.aborted).toBe(true);
     await act(() => Promise.resolve().then(() => { resolve(jsonResponse({ media: [dto] })); }));
     expect(screen.queryByRole('button', { name: 'Ver Foto 1' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Ver Video 1' })).toBeTruthy();
