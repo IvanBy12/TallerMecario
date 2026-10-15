@@ -475,3 +475,46 @@ S4-F07-D FINAL RE-REVIEW: NO FINDINGS
 S4 REAL E2E: BLOCKED
 
 SPRINT 4: NOT_READY
+
+
+## Corrección del harness CI del PR #24 — 2026-10-15
+
+Solicitud: corregir el fallo sintético en [CI 38763827418](https://github.com/IvanBy12/TallerMecario/actions/runs/38763827418), sobre `978e3efad907b88a5d47ffb5baf3306d9531f895`. El log remoto confirma 355/356 y la aserción del primer GET. No conserva su estado HTTP ni el instante de entrega CDP; no permite atribuir ese fallo concreto exclusivamente a una de las hipótesis.
+
+### Diagnóstico reproducido y corrección
+
+- Baseline macOS/Node 22.23.3: archivo afectado 53/53 PASS. Un éxito local no descarta intermitencia Linux.
+- Carrera demostrada con el helper original: demorar exclusivamente la entrega nativa de `Network.responseReceivedExtraInfo` 100 ms deja `initialStatus=200` y cero eventos correlacionados cuando vuelve `page.evaluate`. La latencia API observada fue 185.9 ms; reproduce la misma aserción de CI sin modificar HTTP.
+- Ventana sintética insuficiente demostrada por separado: con TTL original de 2 s y latencia controlada de 2100 ms, el servidor recibió el primer GET con `remainingMs=-582` y lo denegó. La precisión de segundos enteros deja entre 1 y 2 s antes de descontar latencia y planificación. Esto demuestra fragilidad bajo carga; no prueba que fuera la causa del caso remoto con latencia nominal de 180 ms.
+- `s4-download-expiry.ts` espera explícitamente los eventos correlacionados por SHA-256 de la URL completa y `requestId`: uno para el GET inicial y exactamente dos para la comprobación final. Cada espera termina por condición, con límite local de 5 s para evidencia ausente. Conserva HTTP 200 inicial, HTTP 403 final y Date de storage posterior al vencimiento. Admite ExtraInfo antes del evento de solicitud y rechaza IDs/eventos duplicados; revalida al reanudar tras la notificación.
+- Solo el proveedor HTTP sintético cambia TTL de 2 a 5 s, coherente en firma, DTO y vencimiento efectivo del servidor. La regresión de latencia 2100 ms conserva una ventana inicial y vuelve a solicitar la misma capacidad después de su caducidad. TTL/políticas reales, tolerancia temporal y timeouts globales permanecen intactos.
+- La instrumentación temporal solo imprimió números/booleanos y fue retirada. Las regresiones perturban exclusivamente la entrega CDP; los estados HTTP proceden del servidor local. Sin nuevas dependencias, retries, skips ni cambios de producto/backend/S3.
+
+### Verificación de esta corrección
+
+Archivo afectado: 61/61 PASS. Incluye los tres casos previos, latencia 2100 ms, ExtraInfo antes de requestWillBeSent, evidencia inicial/final ausente, respuesta inicial/final duplicada, solicitud duplicada y otra capacidad. `denyExpired: false` continúa rechazado por falta de HTTP 403 real; un error CORS no sustituye evidencia. Continúan las comprobaciones existentes de sanitización, secretos sintéticos y preflight fail-closed.
+
+Node 22.23.3, macOS. Comandos ejecutados secuencialmente sobre el mismo código:
+
+| Verificación | Resultado |
+| --- | --- |
+| Archivo `s4-media.test.ts` completo | PASS, 61/61 |
+| Diez repeticiones con `-t "observes native HTTP and effective expiry"` | PASS, 10/10 corridas, 4/4 casos por corrida (40/40); 29.69–31.07 s por corrida |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS, 0 warnings |
+| `npm test` | PASS, 1315/1315, 48 archivos |
+| `npm run test:e2e:harness` | PASS, 364/364, 16 archivos, 70.04 s |
+| `npm run build` | PASS; aviso previo del chunk de 644.12 kB (>500 kB) |
+| `git diff --check` | PASS |
+
+Los negativos nuevos y existentes pasan porque la verificación rechaza los casos inválidos. El filtro `-t` solo selecciona los cuatro casos de expiración en cada repetición; el archivo y el harness completos ejecutan también las demás regresiones. El log remoto original tiene dependency scan/gitleaks omitidos por el fallo anterior; no se ejecutaron esos scans en esta corrección local ni se declara CI Linux resuelto sin una nueva corrida remota.
+
+### Límites preservados
+
+No se ejecutaron pruebas reales contra Clerk, PostgreSQL ni Cloudflare R2. Los cinco E2E reales siguen bloqueados, S4-03 sigue PENDING, se conserva una sola cuenta y las guardas de producción/preflight. El historial H-1–R-2 no se reabre. La validación macOS debe contrastarse con una nueva corrida GitHub Actions Linux después del push manual del propietario. No se hace push, creación de PR ni merge en esta tarea.
+
+S4-F07-D CI FIX: READY_FOR_REVIEW
+
+S4 REAL E2E: BLOCKED
+
+SPRINT 4: NOT_READY

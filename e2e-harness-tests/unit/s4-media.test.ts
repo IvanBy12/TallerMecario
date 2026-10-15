@@ -179,23 +179,25 @@ describe('S4 correlated HTTP evidence (synthetic, no real integration claim)', (
 
 // Actual Chromium with two LOCAL synthetic HTTP providers. This proves the collector, not Clerk/API/R2 integration.
 describe('S4 Chromium harness (credential-free)', () => {
-  it.each([
-    { browserSkew: 60_000, runnerSkew: -60_000, providerSkew: 30_000, latency: 180, denyExpired: true },
-    { browserSkew: -60_000, runnerSkew: 60_000, providerSkew: -30_000, latency: 180, denyExpired: true },
-    { browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: false },
-  ])('observes native HTTP and effective expiry with controlled clocks/latency %j (synthetic only)', async clocks => {
+  type CdpFault = 'missing-first' | 'missing-second' | 'duplicate-response' | 'duplicate-second' | 'duplicate-request' | 'foreign-capability';
+  async function observeExpiry(clocks: {
+    browserSkew: number; runnerSkew: number; providerSkew: number; latency: number; denyExpired: boolean; cdpDelay: number;
+    cdpFault?: CdpFault; requestDelay?: number;
+  }) {
     let frontendOrigin = '';
     let storageOrigin = '';
     let expiresAt = Infinity;
+    // Synthetic provider only: allow latency/scheduling plus whole-second truncation before the first GET.
+    const syntheticTtlSeconds = 5;
     const realNow = Date.now.bind(Date);
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + clocks.runnerSkew);
     const frontend = http.createServer((request, response) => {
       if (request.url?.endsWith('/download-url')) {
         const signedAt = Math.floor((realNow() + clocks.providerSkew) / 1_000) * 1_000;
         const signedDate = new Date(signedAt).toISOString().replace(/[-:]/g, '').replace('.000', '');
-        expiresAt = signedAt + 2_000;
+        expiresAt = signedAt + syntheticTtlSeconds * 1_000;
         response.setHeader('Content-Type', 'application/json');
-        setTimeout(() => { response.end(JSON.stringify({ mediaAssetId: asset, downloadUrl: `${storageOrigin}/object?signature=${secret}&X-Amz-Date=${signedDate}&X-Amz-Expires=2`, expiresAt: new Date(expiresAt).toISOString() })); }, clocks.latency);
+        setTimeout(() => { response.end(JSON.stringify({ mediaAssetId: asset, downloadUrl: `${storageOrigin}/object?signature=${secret}&X-Amz-Date=${signedDate}&X-Amz-Expires=${String(syntheticTtlSeconds)}`, expiresAt: new Date(expiresAt).toISOString() })); }, clocks.latency);
       } else response.end('<html><body>S4 synthetic harness</body></html>');
     });
     const storage = http.createServer((request, response) => {
@@ -215,6 +217,7 @@ describe('S4 Chromium harness (credential-free)', () => {
       return `http://127.0.0.1:${String(address.port)}`;
     };
     const browser = await chromium.launch();
+    const deliveries = new Set<ReturnType<typeof setTimeout>>();
     try {
       frontendOrigin = await listen(frontend);
       storageOrigin = await listen(storage);
@@ -250,8 +253,38 @@ describe('S4 Chromium harness (credential-free)', () => {
       }, fixtures);
       expect(decoded).toEqual({ imageValid: true, videoValid: true });
       await page.evaluate(() => { Reflect.set(window, 'Clerk', { session: { getToken: () => Promise.resolve('synthetic-token') } }); });
+      // Perturb only native CDP delivery. The local HTTP server still supplies every status.
+      const nativeSession = page.context().newCDPSession.bind(page.context());
+      vi.spyOn(page.context(), 'newCDPSession').mockImplementation(async target => {
+        const cdp = await nativeSession(target);
+        const nativeOn = cdp.on.bind(cdp);
+        const storageRequests: string[] = [];
+        Object.defineProperty(cdp, 'on', { value: (
+          event: 'Network.requestWillBeSent' | 'Network.responseReceivedExtraInfo', listener: (payload: unknown) => void,
+        ) => nativeOn(event, payload => {
+          if ('request' in payload && payload.request.method === 'GET' && new URL(payload.request.url).origin === storageOrigin) {
+            storageRequests.push(payload.requestId);
+            if (clocks.cdpFault === 'foreign-capability') {
+              listener({ ...payload, request: { ...payload.request, url: `${payload.request.url}&foreign=1` } });
+              return;
+            }
+            if (clocks.cdpFault === 'duplicate-request') listener(payload);
+          }
+          if ('statusCode' in payload && storageRequests.includes(payload.requestId)) {
+            if (clocks.cdpFault === 'missing-first' || (clocks.cdpFault === 'missing-second' && storageRequests.length === 2)) return;
+            if (clocks.cdpFault === 'duplicate-response' || (clocks.cdpFault === 'duplicate-second' && storageRequests.length === 2)) listener(payload);
+          }
+          const delay = event === 'Network.responseReceivedExtraInfo' ? clocks.cdpDelay : clocks.requestDelay ?? 0;
+          if (delay > 0) {
+            const delivery = setTimeout(() => { deliveries.delete(delivery); listener(payload); }, delay);
+            deliveries.add(delivery);
+          } else listener(payload);
+        }) });
+        return cdp;
+      });
       const expiry = verifyExpiredDownload(page, { apiOrigin: frontendOrigin, storageOrigin, tenantId: reception, assetId: asset });
-      if (clocks.denyExpired) await expect(expiry).resolves.toEqual({ initialStatus: 200, expiredStorageStatus: 403, waitedPastExpiry: true });
+      if (clocks.cdpFault) await expect(expiry).rejects.toThrow((clocks.cdpFault === 'missing-second' || clocks.cdpFault === 'duplicate-second') ? 'Falta GET real 403' : 'Falta GET real exitoso');
+      else if (clocks.denyExpired) await expect(expiry).resolves.toEqual({ initialStatus: 200, expiredStorageStatus: 403, waitedPastExpiry: true });
       else await expect(expiry).rejects.toThrow('Falta GET real 403');
       await page.evaluate(value => { document.body.innerHTML = `<img alt="${value}" src="https://storage.example.invalid/?secret=${value}">`; }, secret);
       const failure: unknown = await s4Safe(page, 'forced synthetic failure', () => Promise.reject(new Error(secret))).catch((error: unknown) => error);
@@ -259,10 +292,25 @@ describe('S4 Chromium harness (credential-free)', () => {
       expect(page.url()).toBe('about:blank');
     } finally {
       clock.mockRestore();
+      for (const delivery of deliveries) clearTimeout(delivery);
       await browser.close();
       for (const server of [frontend, storage]) await new Promise<void>(resolve => { server.close(() => { resolve(); }); });
     }
+  }
+  it.each([
+    { browserSkew: 60_000, runnerSkew: -60_000, providerSkew: 30_000, latency: 180, denyExpired: true, cdpDelay: 100 },
+    { browserSkew: -60_000, runnerSkew: 60_000, providerSkew: -30_000, latency: 180, denyExpired: true, cdpDelay: 0 },
+    { browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: false, cdpDelay: 100 },
+    { browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 2_100, denyExpired: true, cdpDelay: 0 },
+  ])('observes native HTTP and effective expiry with controlled clocks/latency %j (synthetic only)', observeExpiry);
+  it('correlates ExtraInfo delivered before requestWillBeSent by exact requestId', async () => {
+    await observeExpiry({ browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: true, cdpDelay: 0, requestDelay: 100 });
   });
+  it.each<CdpFault>(['missing-first', 'missing-second', 'duplicate-response', 'duplicate-second', 'duplicate-request', 'foreign-capability'])(
+    'rejects %s CDP evidence despite real storage HTTP', async cdpFault => {
+      await observeExpiry({ browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: true, cdpDelay: 0, cdpFault });
+    },
+  );
 });
 
 
