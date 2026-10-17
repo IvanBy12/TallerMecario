@@ -1,3 +1,6 @@
 # False positive: synthetic Clerk publishable key in a public-routing test fixture.
 # Scoped to this historical finding; all other commits, paths and findings remain scanned.
 e10c8229714cb126065ae06556e20f82d985838f:src/app/public-routes.test.tsx:generic-api-key:35
+# False positive: synthetic S4 signed capability in credential-free harness.
+# Exact historical finding only; all other findings remain scanned.
+5de4e2ea3810690a3b213749d3f1d6ec4e820002:e2e-harness-tests/unit/s4-media.test.ts:generic-api-key:23

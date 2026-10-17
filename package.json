@@ -18,7 +18,10 @@
     "e2e": "playwright test",
     "e2e:mobile": "playwright test --project=mobile-chromium",
     "e2e:headed": "playwright test --project=mobile-chromium --headed",
-    "e2e:list": "playwright test --list"
+    "e2e:list": "playwright test --list",
+    "e2e:s4": "playwright test --config=playwright.s4.config.ts --project=s4-media-chromium",
+    "e2e:s4:list": "playwright test --config=playwright.s4.config.ts --project=s4-media-chromium --list",
+    "e2e:s4:auth": "playwright test --config=playwright.s4.config.ts --project=s4-setup --headed"
   },
   "dependencies": {
     "@clerk/react": "~6.17.4",

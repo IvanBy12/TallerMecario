@@ -554,3 +554,180 @@ TESTING ni PASSED, y local/sintético no se presenta como éxito real. Sprint 4 
 podrá evaluarse tras la ejecución real con evidencia.
 
 `S4-F07-C GATE AUDIT: READY_FOR_PR`
+
+
+## Addendum — Estabilidad asíncrona de galería para PR #24
+
+Fecha: **2026-10-15, America/Bogota**. Responsable: Codex; corrección de pruebas y
+verificación local, pendiente de revisión independiente. Base:
+`036ccdba95e1faf757cd74856b08cb8dfa1c616c`; rama
+`task/s4-f07-d-real-media-e2e`, worktree existente obligatorio. El SHA del commit
+correctivo se entrega en el handoff; este addendum pertenece a ese commit.
+Sin push, PR nuevo, merge ni cambios en main/backend.
+
+### Incidencia y alcance de la evidencia
+
+PR existente: https://github.com/IvanBy12/TallerMecario/pull/24.
+CI reportado por el propietario:
+https://github.com/IvanBy12/TallerMecario/actions/runs/38768997777.
+En `036ccdba`, typecheck/lint pasaron y producto quedó en 1314/1315:
+`success never writes the signed URL to storage, logs or API requests` no encontró
+`img`; el DOM seguía en `Solicitando acceso temporal…`. Harness/build/scans fueron
+omitidos por el fallo previo, no aprobados. El conector de diagnósticos pidió
+conectar GitHub; no se obtuvo una lectura independiente del log remoto aquí.
+La reproducción preexistente en main `9052f263` procede de la evidencia histórica
+F07-D y de la solicitud, no de una nueva ejecución sobre main en esta tarea.
+
+El baseline local de esta sesión pasó 44/44 aislado y 1315/1315 completo. Eso no
+reprodujo inicialmente el fallo exacto del CI ni elimina su evidencia histórica.
+Durante el diagnóstico posterior se confirmó una carrera local del fixture bajo
+StrictMode: el clic podía adelantarse al replay de efectos pasivos del montaje.
+La limpieza de `useOperationalMediaView` abortaba la nueva descarga; la guarda de
+cancelación descartaba correctamente el resultado y la vista permanecía loading.
+No se demostró un defecto de producción ni se obtuvo una traza independiente del
+mismo aborto en Linux. No se atribuye el fallo únicamente al límite de 1000 ms.
+
+### Diagnóstico y corrección sustentados
+
+1. El handler inicia `api.download()` al pulsar Ver y publica loading antes de
+   terminar la petición. El cliente real pasa por token, fetch sintético, lectura
+   JSON y parser; un 401 puede efectuar el único refresh GET ya aprobado.
+   La vista recibe el resultado después de esa cadena. Loading no acredita que
+   el fetch ni `json()` hayan comenzado.
+2. `renderReception` devuelve inmediatamente la respuesta sintética mediante
+   `Promise.resolve`; su `json()` también devuelve una promesa. Aunque los datos
+   ya existan, esas continuaciones y el commit de React siguen siendo asíncronos.
+   Se mantienen provider, cliente, parser y StrictMode reales del fixture.
+3. El antiguo `open()` esperaba el botón y despachaba `fireEvent`, sin esperar la
+   operación. `findByRole` es apropiado para observar DOM, pero el test dependía
+   del polling y su límite local por defecto (1000 ms en la dependencia instalada).
+   Un diagnóstico más estricto, consultando la imagen justo tras `open()`, falló
+   con el helper antiguo y pasó con la primera envoltura act. Este diagnóstico
+   demuestra una frontera incompleta; no reproduce por sí solo el timeout remoto.
+4. Las repeticiones rechazaron correcciones parciales basadas únicamente en act:
+   aún se observaron loading y `json()` no iniciado. Una instrumentación temporal
+   confirmó la señal abortada y capturó la pila `use-operational-gallery.ts:40` →
+   `commitHookPassiveUnmountEffects` → `disconnectPassiveEffect`. La dependencia
+   React instalada invoca esa desconexión desde `doubleInvokeEffectsOnFiber`.
+   Las trazas del diagnóstico son locales sintéticas y no se confunden con el CI.
+5. El fixture registra las promesas reales `getJson` antes de renderizar. Antes
+   de cada apertura, el test espera la operación de lista dentro de act; React
+   termina el montaje y el replay pasivo antes del clic. La respuesta inmediata
+   también espera dentro de act la operación real de descarga. No se reemplazan
+   sus implementaciones y no se desactiva StrictMode.
+6. Para los casos pendientes, `controlledDownload` retiene explícitamente el JSON.
+   Su señal de lectura confirma que el cliente llegó al cuerpo HTTP antes de
+   comprobar loading/cancelar. La liberación espera la operación real dentro de
+   act; entonces las aserciones síncronas exigen la imagen exacta o el error.
+7. Otra repetición detectó en F-2 un request A todavía inexistente al navegar:
+   loading se había usado como prueba de dispatch. El fixture añade `waitForCall`,
+   una promesa resuelta al registrar el fetch sintético real (o con la llamada ya
+   registrada). Los tests esperan esa señal antes de inspeccionar/abortar la
+   solicitud. No usa polling, sleeps ni timeouts adicionales.
+
+Archivos: `reception-operational-gallery.test.tsx`, `src/test/render-reception.tsx`
+y este informe. No se cambian hooks/componentes productivos, contrato, reloj/TTL,
+Vite/Vitest config, paralelismo, CI, dependencias, S3 ni runner F07-D. No se añaden
+skip/fails/retries. Los 44 casos originales se conservan; la suite sigue teniendo
+1315 casos. Los nuevos helpers del fixture solo observan llamadas/promesas, no
+sustituyen sus respuestas ni alteran el transporte productivo. Toda la
+instrumentación temporal de AbortController y sus pilas se retiró del código.
+
+### Regresiones y resultados
+
+Se refuerzan los casos existentes: loading sin imagen mientras JSON está
+pendiente; éxito con una única imagen/nombre/src esperado; ningún setItem ni URL
+firmada en storage/logs/solicitudes API; HTTP 401/403/404 sin imagen; cierre retira
+la capacidad; una respuesta tardía no remonta la vista tras cierre o cambio de
+identidad/tenant. Se comprueban los conteos de descarga y el único refresh 401
+permitido. Expiración, revocación, foco y navegación entre recepciones continúan
+cubiertos. No se eliminan aserciones originales de privacidad.
+
+Los intentos fallidos se conservan, no se convierten en PASS:
+
+- Primer arranque: EPERM al escribir caché Vite por restricción sandbox; cero tests.
+  Ejecuciones posteriores autorizadas en el worktree obligatorio.
+- Diagnóstico con helper antiguo: 7/7 casos seleccionados fallaron al comprobar
+  que la lectura aún no había comenzado; 37 deselectados, no un gate completo.
+  Este diagnóstico usó una versión intermedia de las regresiones.
+- Primer ajuste parcial: 43/44, caso de foco todavía loading; secuencia detenida.
+- Segundo ajuste parcial: cuatro repeticiones 44/44 y quinta 43/44; privacy aún
+  no había llamado json; secuencia detenida.
+- Tercer ajuste parcial: siete repeticiones 44/44 y octava 43/44; request A ausente
+  en F-2; secuencia detenida. Motivó la señal explícita de llegada del fixture.
+
+- Cuarto ajuste parcial: cinco repeticiones 44/44 y sexta 15/44; una espera de
+  lectura no llegó a resolverse, agotó 5000 ms y contaminó el act de los casos
+  posteriores. Se investigó el aborto; no se aumentó el timeout ni se aceptó ese
+  ajuste.
+- Diagnóstico de abort: reproducción 43/44 con señal abortada antes de JSON.
+  La primera captura de pilas pasó diez veces; se redujo su interferencia al
+  activarla solo después del request. La segunda corrida capturó la pila de la
+  limpieza pasiva que abortaba la apertura. No se conserva el spy en el fix.
+- Primera comprobación del helper de montaje: 21/44 por usar la ruta UI en lugar
+  del path HTTP al consultar la operación registrada. Se corrigió el helper;
+  no fue un fallo nuevo de producto.
+
+Ambiente local: macOS, Node **v22.23.3**, npm **10.9.9**, lockfile existente.
+Diagnóstico raíz: `/private/tmp/tm-gallery-strict-abort-2.log`, SHA-256
+`5c4eb7836fa441eae5f0ac5f3a47618ea373ecc4c2d4d296a70d1b263305595a`.
+Este log temporal no es necesario para reproducir las regresiones; se conserva
+la causa y su pila relevante arriba. El archivo no se publica en CI ni en Git.
+
+Después de sincronizar el montaje: **10 ejecuciones aisladas secuenciales,
+44/44 cada una**, entre 1.59 y 1.93 s; **3 suites completas secuenciales,
+1315/1315 cada una**, en 13.05, 13.93 y 13.06 s (48 archivos).
+Las secuencias paraban ante el primer fallo; ninguna usó retries de Vitest.
+
+El primer lint final detectó cinco optional chains redundantes porque
+`requested()` ya devuelve una llamada existente. Se retiraron, fortaleciendo
+las aserciones; después se repitieron archivo y suite completa sobre el código
+final: **44/44** (1.81 s) y **1315/1315** (14.90 s, 48 archivos). Typecheck PASS
+(4.47 s) y lint PASS (18.08 s, cero warnings).
+
+| Gate sobre el código final | Resultado |
+| --- | --- |
+| Galería | PASS 44/44; 10 repeticiones secuenciales + comprobación posterior al lint |
+| Producto | PASS 1315/1315, 48 archivos; 3 repeticiones secuenciales + comprobación posterior al lint |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS, cero warnings |
+| `npm run test:e2e:harness` | PASS 364/364, 16 archivos; 71.63 s |
+| `npm run build` | PASS; warning preexistente 644.12 kB, sin aumentar límites |
+| `git diff --check` | PASS |
+| Alcance | Solo prueba de galería, fixture y este addendum; main, producto, S3 y F07-D preservados |
+
+Comandos reproducibles desde el worktree obligatorio, con Node 22 y dependencias
+del lockfile ya instaladas:
+
+```sh
+npx vitest run src/features/reception/reception-operational-gallery.test.tsx
+npm test
+npm run typecheck
+npm run lint
+npm run test:e2e:harness
+npm run build
+git diff --check
+git status --short
+```
+
+Las diez repeticiones aisladas y las tres suites completas se ejecutaron mediante
+invocaciones separadas secuenciales de los dos primeros comandos, deteniéndose
+ante cualquier fallo. Todos los fallos anteriores están registrados arriba.
+La entrega final crea un único commit local sobre la base indicada; SHA y estado
+Git posterior se entregan en el handoff. No hay push ni modificación del PR remoto.
+
+**S4-F07-C GALLERY CI FIX: READY_FOR_REVIEW.** Corrección de la carrera del test
+sustentada por el diagnóstico de abort y por las regresiones controladas; la
+aceptación del revisor y la confirmación Linux de CI siguen pendientes.
+
+### Límites y handoff
+
+Verificar el diff incremental sobre `036ccdba`, los gates y una nueva ejecución
+Linux de PR #24 cuando el propietario publique el commit. Las repeticiones macOS
+no certifican estabilidad perpetua ni el resultado de CI remoto. No se ejecutó
+Clerk/API/DB/R2 real, staging ni QA. Se preserva S4-03 PENDING y los cinco E2E reales
+siguen sin ejecutarse. No hay certificación funcional multimedia nueva.
+
+S4 REAL E2E: BLOCKED
+
+SPRINT 4: NOT_READY
