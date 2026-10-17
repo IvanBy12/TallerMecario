@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -182,11 +183,12 @@ describe('S4 Chromium harness (credential-free)', () => {
   type CdpFault = 'missing-first' | 'missing-second' | 'duplicate-response' | 'duplicate-second' | 'duplicate-request' | 'foreign-capability';
   async function observeExpiry(clocks: {
     browserSkew: number; runnerSkew: number; providerSkew: number; latency: number; denyExpired: boolean; cdpDelay: number;
-    cdpFault?: CdpFault; requestDelay?: number;
+    cdpFault?: CdpFault; requestDelay?: number; lateFirstDuplicate?: boolean;
   }) {
     let frontendOrigin = '';
     let storageOrigin = '';
     let expiresAt = Infinity;
+    let capabilityHash = '';
     // Synthetic provider only: allow latency/scheduling plus whole-second truncation before the first GET.
     const syntheticTtlSeconds = 5;
     const realNow = Date.now.bind(Date);
@@ -196,8 +198,10 @@ describe('S4 Chromium harness (credential-free)', () => {
         const signedAt = Math.floor((realNow() + clocks.providerSkew) / 1_000) * 1_000;
         const signedDate = new Date(signedAt).toISOString().replace(/[-:]/g, '').replace('.000', '');
         expiresAt = signedAt + syntheticTtlSeconds * 1_000;
+        const downloadUrl = `${storageOrigin}/object?signature=${secret}&X-Amz-Date=${signedDate}&X-Amz-Expires=${String(syntheticTtlSeconds)}`;
+        capabilityHash = createHash('sha256').update(downloadUrl).digest('hex');
         response.setHeader('Content-Type', 'application/json');
-        setTimeout(() => { response.end(JSON.stringify({ mediaAssetId: asset, downloadUrl: `${storageOrigin}/object?signature=${secret}&X-Amz-Date=${signedDate}&X-Amz-Expires=${String(syntheticTtlSeconds)}`, expiresAt: new Date(expiresAt).toISOString() })); }, clocks.latency);
+        setTimeout(() => { response.end(JSON.stringify({ mediaAssetId: asset, downloadUrl, expiresAt: new Date(expiresAt).toISOString() })); }, clocks.latency);
       } else response.end('<html><body>S4 synthetic harness</body></html>');
     });
     const storage = http.createServer((request, response) => {
@@ -253,39 +257,114 @@ describe('S4 Chromium harness (credential-free)', () => {
       }, fixtures);
       expect(decoded).toEqual({ imageValid: true, videoValid: true });
       await page.evaluate(() => { Reflect.set(window, 'Clerk', { session: { getToken: () => Promise.resolve('synthetic-token') } }); });
-      // Perturb only native CDP delivery. The local HTTP server still supplies every status.
+      // Pair native events BEFORE choosing a fault. ExtraInfo can arrive first;
+      // its requestId must inherit the identity of its own GET, never a live count.
+      type Phase = 'initial' | 'expired';
+      const facts = {
+        initial: { requests: 0, responses: 0, status: 0 }, expired: { requests: 0, responses: 0, status: 0 },
+        sameCapability: true, order: [] as string[], faults: [] as string[],
+      };
+      const schedule = (callback: () => void, delay: number) => {
+        if (delay === 0) { callback(); return; }
+        const delivery = setTimeout(() => { deliveries.delete(delivery); callback(); }, delay);
+        deliveries.add(delivery);
+      };
       const nativeSession = page.context().newCDPSession.bind(page.context());
       vi.spyOn(page.context(), 'newCDPSession').mockImplementation(async target => {
         const cdp = await nativeSession(target);
         const nativeOn = cdp.on.bind(cdp);
-        const storageRequests: string[] = [];
+        type Pair = { phase?: Phase; request?: () => void; response?: () => void; dispatched?: boolean; responseCount?: number; status?: number };
+        const pairs = new Map<string, Pair>();
+        let initialRequestId: string | undefined;
+        let lateDuplicate: (() => void) | undefined;
+        const pairFor = (requestId: string) => {
+          let pair = pairs.get(requestId);
+          if (pair === undefined) { pair = {}; pairs.set(requestId, pair); }
+          return pair;
+        };
+        const dispatch = (pair: Pair) => {
+          if (pair.phase !== undefined) {
+            facts[pair.phase].responses = pair.responseCount ?? 0;
+            facts[pair.phase].status = pair.status ?? 0;
+          }
+          if (pair.dispatched || pair.request === undefined || pair.response === undefined) return;
+          pair.dispatched = true;
+          // A duplicate held until the second native GET tests the gap between
+          // the helper's initial and final waits, without any timing guess.
+          if (pair.phase === 'expired') { lateDuplicate?.(); lateDuplicate = undefined; }
+          if ((clocks.requestDelay ?? 0) > 0) {
+            pair.response(); schedule(pair.request, clocks.requestDelay ?? 0);
+          } else {
+            pair.request(); schedule(pair.response, clocks.cdpDelay);
+          }
+        };
         Object.defineProperty(cdp, 'on', { value: (
           event: 'Network.requestWillBeSent' | 'Network.responseReceivedExtraInfo', listener: (payload: unknown) => void,
         ) => nativeOn(event, payload => {
-          if ('request' in payload && payload.request.method === 'GET' && new URL(payload.request.url).origin === storageOrigin) {
-            storageRequests.push(payload.requestId);
-            if (clocks.cdpFault === 'foreign-capability') {
-              listener({ ...payload, request: { ...payload.request, url: `${payload.request.url}&foreign=1` } });
-              return;
+          const pair = pairFor(payload.requestId);
+          if ('request' in payload) {
+            if (payload.request.method !== 'GET' || new URL(payload.request.url).origin !== storageOrigin) {
+              listener(payload); return;
             }
-            if (clocks.cdpFault === 'duplicate-request') listener(payload);
+            initialRequestId ??= payload.requestId;
+            const phase: Phase = payload.requestId === initialRequestId ? 'initial' : 'expired';
+            pair.phase = phase;
+            facts[phase].requests++;
+            facts.sameCapability &&= createHash('sha256').update(payload.request.url).digest('hex') === capabilityHash;
+            pair.request = () => {
+              facts.order.push(`${phase}:request`);
+              if (phase === 'initial' && clocks.cdpFault === 'foreign-capability') {
+                facts.faults.push('foreign-capability:initial');
+                listener({ ...payload, request: { ...payload.request, url: `${payload.request.url}&foreign=1` } });
+              } else {
+                listener(payload);
+                if (phase === 'initial' && clocks.cdpFault === 'duplicate-request') {
+                  facts.faults.push('duplicate-request:initial'); listener(payload);
+                }
+              }
+            };
+          } else {
+            pair.responseCount = (pair.responseCount ?? 0) + 1; pair.status = payload.statusCode;
+            pair.response = () => {
+              const phase = pair.phase;
+              if (phase === undefined) throw new Error('Unpaired synthetic CDP response.');
+              const emit = () => { facts.order.push(`${phase}:response`); listener(payload); };
+              const fault = clocks.cdpFault;
+              if ((phase === 'initial' && fault === 'missing-first') || (phase === 'expired' && fault === 'missing-second')) {
+                facts.faults.push(`${fault}:${phase}`); return;
+              }
+              emit();
+              if ((phase === 'initial' && fault === 'duplicate-response') || (phase === 'expired' && fault === 'duplicate-second')) {
+                const duplicate = () => { facts.faults.push(`${fault}:${phase}`); emit(); };
+                if (clocks.lateFirstDuplicate) lateDuplicate = duplicate;
+                else duplicate();
+              }
+            };
           }
-          if ('statusCode' in payload && storageRequests.includes(payload.requestId)) {
-            if (clocks.cdpFault === 'missing-first' || (clocks.cdpFault === 'missing-second' && storageRequests.length === 2)) return;
-            if (clocks.cdpFault === 'duplicate-response' || (clocks.cdpFault === 'duplicate-second' && storageRequests.length === 2)) listener(payload);
-          }
-          const delay = event === 'Network.responseReceivedExtraInfo' ? clocks.cdpDelay : clocks.requestDelay ?? 0;
-          if (delay > 0) {
-            const delivery = setTimeout(() => { deliveries.delete(delivery); listener(payload); }, delay);
-            deliveries.add(delivery);
-          } else listener(payload);
+          dispatch(pair);
         }) });
         return cdp;
       });
       const expiry = verifyExpiredDownload(page, { apiOrigin: frontendOrigin, storageOrigin, tenantId: reception, assetId: asset });
-      if (clocks.cdpFault) await expect(expiry).rejects.toThrow((clocks.cdpFault === 'missing-second' || clocks.cdpFault === 'duplicate-second') ? 'Falta GET real 403' : 'Falta GET real exitoso');
+      if (clocks.cdpFault) await expect(expiry).rejects.toThrow((clocks.cdpFault === 'missing-second' || clocks.cdpFault === 'duplicate-second' || clocks.lateFirstDuplicate) ? 'Falta GET real 403' : 'Falta GET real exitoso');
       else if (clocks.denyExpired) await expect(expiry).resolves.toEqual({ initialStatus: 200, expiredStorageStatus: 403, waitedPastExpiry: true });
       else await expect(expiry).rejects.toThrow('Falta GET real 403');
+      // A rejection is insufficient: prove the intended fault reached the intended
+      // native GET, and that reordering/delay actually happened at delivery.
+      expect(facts.sameCapability).toBe(true);
+      expect(facts.initial.requests).toBe(1);
+      if (clocks.cdpFault !== 'duplicate-request') expect(facts.initial).toEqual({ requests: 1, responses: 1, status: 200 });
+      const finalPhase = !clocks.cdpFault || clocks.cdpFault === 'missing-second' || clocks.cdpFault === 'duplicate-second' || clocks.lateFirstDuplicate;
+      if (finalPhase) expect(facts.expired).toEqual({ requests: 1, responses: 1, status: clocks.denyExpired ? 403 : 200 });
+      expect(facts.faults).toEqual(clocks.cdpFault ? [`${clocks.cdpFault}:${clocks.cdpFault.endsWith('second') ? 'expired' : 'initial'}`] : []);
+      for (const phase of ['initial', 'expired'] as const) {
+        const request = facts.order.indexOf(`${phase}:request`), response = facts.order.indexOf(`${phase}:response`);
+        if (request !== -1 && response !== -1) expect(response < request).toBe((clocks.requestDelay ?? 0) > 0);
+      }
+      if (clocks.lateFirstDuplicate) {
+        expect(facts.order.lastIndexOf('initial:response')).toBeGreaterThan(facts.order.indexOf('initial:request'));
+        expect(facts.expired.requests).toBe(1);
+      }
       await page.evaluate(value => { document.body.innerHTML = `<img alt="${value}" src="https://storage.example.invalid/?secret=${value}">`; }, secret);
       const failure: unknown = await s4Safe(page, 'forced synthetic failure', () => Promise.reject(new Error(secret))).catch((error: unknown) => error);
       expect(failure instanceof Error && !failure.message.includes(secret)).toBe(true);
@@ -308,7 +387,12 @@ describe('S4 Chromium harness (credential-free)', () => {
   });
   it.each<CdpFault>(['missing-first', 'missing-second', 'duplicate-response', 'duplicate-second', 'duplicate-request', 'foreign-capability'])(
     'rejects %s CDP evidence despite real storage HTTP', async cdpFault => {
-      await observeExpiry({ browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: true, cdpDelay: 0, cdpFault });
+      for (const delivery of [{ cdpDelay: 0, requestDelay: 0 }, { cdpDelay: 100, requestDelay: 0 }, { cdpDelay: 0, requestDelay: 100 }]) {
+        await observeExpiry({ browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: true, ...delivery, cdpFault });
+        if (cdpFault === 'duplicate-response') await observeExpiry({
+          browserSkew: 0, runnerSkew: 0, providerSkew: 0, latency: 0, denyExpired: true, ...delivery, cdpFault, lateFirstDuplicate: true,
+        });
+      }
     },
   );
 });

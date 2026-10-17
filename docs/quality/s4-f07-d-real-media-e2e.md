@@ -518,3 +518,81 @@ S4-F07-D CI FIX: READY_FOR_REVIEW
 S4 REAL E2E: BLOCKED
 
 SPRINT 4: NOT_READY
+
+
+## Corrección de inyección CDP no determinista en Linux CI — 2026-10-17
+
+Solicitud del propietario sobre PR #24 y HEAD `da6c42e4e37e1134c91686bfccd3c65eb181406c`, rama `task/s4-f07-d-real-media-e2e`, worktree obligatorio existente. Solo se modifica el fixture de `e2e-harness-tests/unit/s4-media.test.ts` y este addendum. El helper real `e2e/support/s4-download-expiry.ts` permanece intacto tras comprobar sus guardas. Sin cambios en producto/F07-C, backend, autenticación, workflows, dependencias, configuración, TTL ni timeouts.
+
+### Incidencia y diagnóstico
+
+Se leyó independientemente el [log de CI 38776580161](https://github.com/IvanBy12/TallerMecario/actions/runs/38776580161): harness 362/364. `duplicate-response` esperaba el rechazo del GET inicial y recibió el del GET final; `duplicate-second` aceptó `{ initialStatus: 200, expiredStorageStatus: 403, waitedPastExpiry: true }`. La solicitud registra typecheck/lint y producto 1315/1315 PASS, con build/audit/Gitleaks SKIPPED; los pasos omitidos no se convierten en PASS. Baseline macOS local del archivo: 61/61, 70.34 s; no reprodujo por sí solo la intermitencia Linux.
+
+La inyección anterior consultaba `storageRequests.includes(requestId)` y el tamaño actual del array al llegar ExtraInfo. La identidad del evento dependía, por tanto, de otros eventos ya recibidos. Se extrajo y transpiló el callback original de `da6c42e` sin reimplementarlo y se reprodujeron dos órdenes de entrada controlados:
+
+- ExtraInfo inicial → request inicial → request final → ExtraInfo final: en `duplicate-response`, el callback entrega una respuesta inicial y dos finales. Duplica el GET incorrecto, coherente con el primer fallo de CI.
+- ExtraInfo inicial → request inicial → ExtraInfo final → request final: en `duplicate-second`, entrega una respuesta por GET. No aplica la perturbación, coherente con el segundo fallo de CI.
+
+Este replay demuestra el defecto del fixture; usa eventos diagnósticos sintéticos, no una integración R2 ni una captura del orden exacto del CI remoto. CDP puede entregar ExtraInfo fuera de la secuencia asumida; el helper ya conservaba sus datos por requestId antes de conocer el request.
+
+### Corrección y evidencia de inyección
+
+El fixture reúne request y ExtraInfo nativos en un mapa por requestId antes de transformar o entregar el par. Conserva la identidad del primer GET; cada evento posterior usa la fase guardada de su propio requestId. Comprueba SHA-256 contra la capacidad emitida por el proveedor sintético, un solo request/ExtraInfo nativo por fase y HTTP 200 inicial/403 final cuando la verificación alcanza esa fase. Una llegada anticipada de ExtraInfo queda pendiente hasta conocer su request, en lugar de decidir el objetivo mediante el número de eventos presentes.
+
+Cada uno de los seis negativos ejecuta tres variantes: request antes de ExtraInfo, ExtraInfo demorado 100 ms y ExtraInfo antes del request demorado 100 ms. Son perturbaciones de entrega CDP; ningún estado HTTP es fabricado. Se mantienen el proveedor HTTP local, Date del proveedor, TTL sintético de cinco segundos, reloj monotónico y el límite local existente de cinco segundos por condición.
+
+El registro de perturbaciones debe contener exactamente el modo y la fase esperados; se actualiza al suprimir, modificar o duplicar efectivamente el evento entregado. El orden de los callbacks también se verifica. No basta con que la promesa rechace:
+
+| Modo | Evento transformado y comprobado |
+| --- | --- |
+| `duplicate-response` | ExtraInfo del GET inicial duplicado |
+| `duplicate-second` | ExtraInfo del GET final duplicado |
+| `duplicate-request` | request inicial duplicado |
+| `missing-first` | ExtraInfo inicial omitido |
+| `missing-second` | ExtraInfo final omitido, preservando el inicial |
+| `foreign-capability` | request inicial con otra capacidad |
+
+Además, `duplicate-response` incluye, en cada orden, un duplicado inicial retenido hasta observar el segundo GET nativo. Esta entrega está entre la primera y la segunda verificación del helper, sin un sleep para adivinar la fase. El helper lo rechaza con el error final porque conserva el conjunto de duplicados y lo vuelve a comprobar. No fue necesario cambiarlo.
+
+La primera ejecución de la corrección quedó en 60/61: una aserción del fixture exigía la entrega final demorada incluso después de que el duplicado tardío ya provocara el rechazo. Se separaron los hechos nativos recibidos de los callbacks entregados; no se relajó el rechazo ni se alteró el helper. El caso focalizado corregido pasó 1/1 (60 casos fuera de la selección), con seis recorridos Chromium, en 24.27 s. No se oculta la corrida fallida.
+
+### Mutaciones independientes
+
+Dos variantes del helper se ejecutaron en una copia temporal fuera del repositorio; nunca sobre el worktree revisado:
+
+- Ignorar duplicados de ExtraInfo: `duplicate-second` falla porque la promesa resuelve en vez de rechazar (8.05 s).
+- Borrar el conjunto de duplicados antes de la verificación final: el duplicado inicial entre fases deja de rechazarse y `duplicate-response` falla porque la promesa resuelve (8.67 s).
+
+Ambos mutantes son detectados. Las regresiones ejercitan errores reales de aceptación del helper; no se limitan a probar el propio registro de inyección. La copia temporal se restaura y se elimina al terminar.
+
+### Gates sobre el código final
+
+Ambiente: macOS, Node v22.23.3, npm 10.9.9 y dependencias existentes. Las dos repeticiones focalizadas fueron secuenciales y se detenían ante cualquier fallo; coincidieron con el harness completo para comprobar también ejecución bajo carga. Los 55 casos fuera del filtro en cada repetición no se cuentan como aprobados; el archivo y el harness completos sí los ejecutaron.
+
+| Comando / verificación | Resultado |
+| --- | --- |
+| `npx vitest run --config e2e-harness-tests/vitest.config.ts e2e-harness-tests/unit/s4-media.test.ts` | PASS 61/61; 155.74 s |
+| Mismo comando con `-t 'rejects .* CDP evidence'`, repetición 1 | PASS 6/6 seleccionados, 21 recorridos Chromium; 117.89 s |
+| Mismo comando con `-t 'rejects .* CDP evidence'`, repetición 2 | PASS 6/6 seleccionados, 21 recorridos Chromium; 117.30 s |
+| `npm run test:e2e:harness` | PASS 364/364, 16 archivos; 155.88 s |
+| `npm run typecheck` | PASS sobre el código final |
+| `npm run lint` | PASS sobre el código final; cero warnings |
+| `npm test` | PASS 1315/1315, 48 archivos; 14.86 s |
+| `npm run build` | PASS; aviso preexistente de chunk de 644.12 kB |
+| `git diff --check` | PASS |
+
+Los 61 tests del archivo y los 364 del harness se conservan; los seis negativos ejecutan 21 recorridos Chromium en total (18 variantes de modo/orden y tres duplicados entre fases). No se añaden skips, retries, sleeps de estabilización ni timeouts globales. Los timers de entrega se limpian en finally y las sesiones CDP se cierran por el helper existente. CORS/TypeError no sustituyen un HTTP 403 real, se conserva la misma capacidad y no se publican URLs, tokens ni headers privados en la instrumentación.
+
+### Gitleaks y límites
+
+Los dos fingerprints de `.gitleaksignore` conservan el formato SHA:archivo:regla:línea. Se comprobó que cada commit y archivo existe y que la línea histórica corresponde al marcador sintético previsto, incluido el S4 de `5de4e2ea3810690a3b213749d3f1d6ec4e820002`, línea 23. No se elimina ni amplía la excepción; `.gitleaksignore` no cambia.
+
+GITLEAKS LOCAL: NOT_RUN — no hay binario Gitleaks v8.30.1 disponible en el entorno. Su aprobación, al igual que npm audit no ejecutado aquí, sigue pendiente de GitHub Actions. Docker está instalado, pero su daemon/socket no está disponible; no hay un entorno Linux local operativo y no se instala infraestructura adicional.
+
+La repetición local con Chromium/macOS no certifica Linux CI. El propietario debe publicar manualmente el commit y comprobar el nuevo workflow. No se ejecutaron Clerk/API/PostgreSQL/R2 reales, staging ni QA. Se preservan S4-03 PENDING, los cinco E2E reales sin ejecutar y las precondiciones anteriores. Esta corrección no reabre la aprobación del runner ni convierte evidencia sintética en E2E real. Se crea únicamente un commit local, sin push, PR nuevo ni merge; SHA y estado Git se entregan en el handoff.
+
+S4-F07-D CDP CI FIX: READY_FOR_REVIEW
+
+S4 REAL E2E: BLOCKED
+
+SPRINT 4: NOT_READY
